@@ -1038,6 +1038,9 @@ impl TransferJob {
     }
 
     async fn set_stream_offset(&mut self, file_num: usize, offset: u64) {
+        if file_num >= self.files.len() {
+            return;
+        }
         let DataSource::FilePath(p) = &self.data_source;
         let entry = &self.files[file_num];
         let Some(path) = self.resolve_entry_path(p, &entry.name) else {
