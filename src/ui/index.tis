@@ -33,7 +33,6 @@ var connect_status = tmp[0];
 var service_stopped = handler.get_option("stop-service") == "Y";
 var disable_udp = handler.get_option("disable-udp") == "Y";
 var using_public_server = handler.using_public_server();
-var software_update_url = "";
 var key_confirmed = tmp[1];
 var system_error = "";
 
@@ -721,8 +720,7 @@ class App: Reactor.Component
                         {!outgoing_only && <PasswordArea />}
                     </div>
                     {(!is_win || handler.is_installed() || disable_installation) ? "" : <InstallMe />}
-                    {software_update_url && !disable_installation ? <UpdateMe /> : ""}
-                    {is_win && handler.is_installed() && !software_update_url && handler.is_installed_lower_version() && !disable_installation ? <UpgradeMe /> : ""}
+                    {is_win && handler.is_installed() && handler.is_installed_lower_version() && !disable_installation ? <UpgradeMe /> : ""}
                     {is_can_screen_recording ? "": <CanScreenRecording />}
                     {is_can_screen_recording && !handler.is_process_trusted(false) ? <TrustMe /> : ""}
                     {!service_stopped && is_can_screen_recording && handler.is_process_trusted(false) && handler.is_installed() && !handler.is_installed_daemon(false) ? <InstallDaemon /> : ""}
@@ -810,49 +808,6 @@ class UpgradeMe: Reactor.Component {
 
     event click $(#install-me) {
         handler.update_me("");
-    }
-}
-
-class UpdateMe: Reactor.Component {
-    function render() {
-        var update_or_download = "download"; // !is_win ? "download" : "update";
-        return <div .install-me>
-            <div>{translate('Status')}</div>
-            <div>There is a newer version of {handler.get_app_name()} ({handler.get_new_version()}) available.</div>
-            {is_custom_client
-                ? <div style="font-size: 1em; font-weight: normal; text-align: left; padding-top: 1em;">{translate('Enable \"Auto update\" or contact your administrator for the latest version.')}</div>
-                : <div #install-me.link>{translate('Click to ' + update_or_download)}</div>}
-            <div #download-percent style="display:hidden; padding-top: 1em;" />
-        </div>;
-    }
-
-    event click $(#install-me) {
-        handler.open_url("https://rustdesk.com/download");
-        return;
-        if (!is_win) {
-            handler.open_url("https://rustdesk.com");
-            return;
-        }
-        var url = software_update_url + '.' + handler.get_software_ext();
-        var path = handler.get_software_store_path();
-        var onsuccess = function(md5) {
-            $(#download-percent).content(translate("Installing ..."));
-            handler.update_me(path);
-        };
-        var onerror = function(err) {
-            msgbox("custom-error", "Download Error", "Failed to download"); 
-        };
-        var onprogress = function(loaded, total) {
-            if (!total) total = 5 * 1024 * 1024;
-            var el = $(#download-percent);
-            el.style.set{display: "block"};
-            el.content("Downloading %" + (loaded * 100 / total));
-        };
-        stdout.println("Downloading " + url + " to " + path);
-        download(
-            url,
-            self.url(path),
-            onsuccess, onerror, onprogress);
     }
 }
 
@@ -1437,11 +1392,6 @@ function checkConnectStatus() {
         tmp = handler.get_error();
         if (system_error != tmp) {
             system_error = tmp;
-            app.update();
-        }
-        tmp = handler.get_software_update_url();
-        if (tmp != software_update_url) {
-            software_update_url = tmp;
             app.update();
         }
         if (handler.recent_sessions_updated()) {

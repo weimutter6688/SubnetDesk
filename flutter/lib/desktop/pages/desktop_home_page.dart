@@ -33,12 +33,6 @@ class DesktopHomePage extends StatefulWidget {
 
 const borderColor = Color(0xFF2F65BA);
 const _showSelinuxHelpTipOption = 'show-selinux-help-tip';
-const _selinuxHelpUrl =
-    'https://github.com/zibo-chen/SubnetDesk/blob/master/docs/linux-host-readiness.md#selinux';
-const _waylandHelpUrl =
-    'https://github.com/zibo-chen/SubnetDesk/blob/master/docs/linux-host-readiness.md#wayland-session';
-const _loginWaylandHelpUrl =
-    'https://github.com/zibo-chen/SubnetDesk/blob/master/docs/linux-host-readiness.md#wayland-login-screen';
 const _lanDeviceNameOption = 'lan-device-name';
 
 class LanServerInfoPanel extends StatefulWidget {
@@ -1964,14 +1958,14 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     }
   }
 
-  String? _setupIssueHelpUrl(SetupReadinessIssue issue) {
+  String? _setupIssueHelp(SetupReadinessIssue issue) {
     switch (issue) {
       case SetupReadinessIssue.selinux:
-        return _selinuxHelpUrl;
+        return translate('Check SELinux denial records with sudo ausearch -m AVC -ts recent, then allow only the required SubnetDesk operations in the local policy.');
       case SetupReadinessIssue.wayland:
-        return _waylandHelpUrl;
+        return translate('Wayland may require local permission for screen capture and input after login. For unattended access, select an X11 session and sign in again.');
       case SetupReadinessIssue.loginWayland:
-        return _loginWaylandHelpUrl;
+        return translate('Remote control of a Wayland login screen is not supported. Configure the display manager to use X11 for unattended access.');
       case SetupReadinessIssue.systemError:
       case SetupReadinessIssue.applicationInstall:
       case SetupReadinessIssue.screenRecording:
@@ -2017,9 +2011,21 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       case SetupReadinessIssue.selinux:
       case SetupReadinessIssue.wayland:
       case SetupReadinessIssue.loginWayland:
-        final helpUrl = _setupIssueHelpUrl(issue);
-        if (helpUrl != null) {
-          await launchUrl(Uri.parse(helpUrl));
+        final help = _setupIssueHelp(issue);
+        if (help != null) {
+          await showDialog<void>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text(translate('Help')),
+              content: SelectableText(help),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(translate('OK')),
+                ),
+              ],
+            ),
+          );
         }
         break;
       case SetupReadinessIssue.systemError:
@@ -2885,8 +2891,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
               "",
               () async {},
               marginTop: LinuxCards.isEmpty ? 20.0 : 5.0,
-              help: 'Help',
-              link: _selinuxHelpUrl,
               closeButton: true,
               closeOption: _showSelinuxHelpTipOption,
             ),
@@ -2901,8 +2905,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             "",
             () async {},
             marginTop: LinuxCards.isEmpty ? 20.0 : 5.0,
-            help: 'Help',
-            link: _waylandHelpUrl,
           ),
         );
       } else if (bind.mainIsLoginWayland()) {
@@ -2913,8 +2915,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             "",
             () async {},
             marginTop: LinuxCards.isEmpty ? 20.0 : 5.0,
-            help: 'Help',
-            link: _loginWaylandHelpUrl,
           ),
         );
       }

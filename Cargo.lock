@@ -7088,7 +7088,6 @@ dependencies = [
  "rdev",
  "repng",
  "reqwest",
- "ring",
  "ringbuf",
  "rubato",
  "runas",

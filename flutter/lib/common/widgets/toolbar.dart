@@ -12,20 +12,10 @@ import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:get/get.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 bool isEditOsPassword = false;
 const String kPeerOptionAllowWaylandKeyboard = 'allow-wayland-keyboard';
-const String kWaylandKeyboardIssueUrl =
-    'https://github.com/rustdesk/rustdesk/issues/14586';
 final Set<String> _waylandKeyboardPromptSuppressedConnectionIds = <String>{};
-
-Future<bool> openWaylandKeyboardIssueUrl() {
-  return launchUrl(
-    Uri.parse(kWaylandKeyboardIssueUrl),
-    mode: LaunchMode.externalApplication,
-  );
-}
 
 bool isWaylandKeyboardPromptSuppressedForConnection(String connectionId) {
   return _waylandKeyboardPromptSuppressedConnectionIds.contains(connectionId);
@@ -292,37 +282,6 @@ void showWaylandKeyboardInputWarningDialog({
                 ],
               ).marginOnly(bottom: 10),
             ],
-            TextButton(
-              onPressed: consentInProgress
-                  ? null
-                  : () async {
-                      try {
-                        final opened = await openWaylandKeyboardIssueUrl();
-                        if (!opened) {
-                          // Opening this optional help link almost never fails in
-                          // normal desktop environments. Keep the result handled
-                          // for review hygiene, but avoid a low-value user toast.
-                          debugPrint(
-                            'Failed to open Wayland keyboard issue URL',
-                          );
-                        }
-                      } catch (e) {
-                        debugPrint(
-                          'Failed to open Wayland keyboard issue URL: $e',
-                        );
-                      }
-                    },
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.blue,
-                padding: EdgeInsets.zero,
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: Text(
-                translate('Why this happens'),
-                style: const TextStyle(decoration: TextDecoration.underline),
-              ),
-            ).marginOnly(bottom: 6),
             CheckboxListTile(
               value: remember,
               dense: true,

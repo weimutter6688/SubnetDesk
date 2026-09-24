@@ -124,6 +124,10 @@ The default credentials are shared by all copies; replace the password in LAN se
 
 As with any remote-control software, expose the listening port only to trusted networks, use a strong unique password, and verify fingerprints through a separate trusted channel when possible.
 
+There is no GitHub update checker, downloader, installer, or online help link in
+the application. Distribute updates manually over LAN/VPN or offline media.
+Build dependencies and repository documentation may still reference GitHub.
+
 <a id="build-from-source"></a>
 
 ## 🛠️ Build from source

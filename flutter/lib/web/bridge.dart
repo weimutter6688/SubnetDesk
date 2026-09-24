@@ -831,27 +831,6 @@ class RustdeskImpl {
     return Future(() => js.context.callMethod('getByName', ['version']));
   }
 
-  Future<String> mainGetSoftwareUpdateState({dynamic hint}) async {
-    return '{"state":"disabled","current_version":"","available_version":"","progress":0,"message":"Automatic updates are unavailable on Web","release_notes_url":"","mandatory":false,"auto_check":false,"auto_download":false}';
-  }
-
-  Future<String> mainCheckSoftwareUpdate({dynamic hint}) async {
-    return 'Automatic updates are unavailable on Web';
-  }
-
-  Future<String> mainDownloadSoftwareUpdate({dynamic hint}) async {
-    return 'Automatic updates are unavailable on Web';
-  }
-
-  Future<String> mainInstallSoftwareUpdate({dynamic hint}) async {
-    return 'Automatic updates are unavailable on Web';
-  }
-
-  Future<void> mainSetSoftwareUpdatePreferences(
-      {required bool autoCheck,
-      required bool autoDownload,
-      dynamic hint}) async {}
-
   Future<List<String>> mainGetFav({dynamic hint}) {
     List<String> favs = [];
     try {
@@ -1220,10 +1199,6 @@ class RustdeskImpl {
 
   Future<String> mainGetLastRemoteId({dynamic hint}) {
     return Future(() => mainGetLocalOption(key: 'last_remote_id'));
-  }
-
-  Future<void> mainGetSoftwareUpdateUrl({dynamic hint}) {
-    throw UnimplementedError("mainGetSoftwareUpdateUrl");
   }
 
   Future<String> mainGetHomeDir({dynamic hint}) {
