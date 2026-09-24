@@ -775,6 +775,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Refresh devices", "刷新设备"),
         ("Discovery status may be delayed. You can still try to connect.", "状态基于局域网发现，可能有延迟；未发现不代表设备已关机，仍可尝试连接。"),
         ("conn-e2ee-unavailable-tip", "无法验证端到端加密。\n远程设备可能仍在准备中，请稍后重试。\n如果此问题持续出现，服务器可能不受信任。\n仍要继续吗？"),
+        ("Allowed source networks: one CIDR per line. Edit or delete any range. Empty blocks native incoming connections. Tailscale: 100.64.0.0/10; IPv6 is covered by fc00::/7.", "允许接入的来源网段：每行一个 CIDR，可修改或删除。清空后拒绝原生客户端连接。Tailscale：100.64.0.0/10；IPv6 已包含在 fc00::/7 中。"),
         ("Check SELinux denial records with sudo ausearch -m AVC -ts recent, then allow only the required SubnetDesk operations in the local policy.", "使用 sudo ausearch -m AVC -ts recent 查看 SELinux 拒绝记录，然后在本地策略中仅允许 SubnetDesk 所需的操作。"),
         ("Wayland may require local permission for screen capture and input after login. For unattended access, select an X11 session and sign in again.", "Wayland 登录后可能需要在本机授权屏幕捕获和输入。若需要无人值守访问，请选择 X11 会话并重新登录。"),
         ("Remote control of a Wayland login screen is not supported. Configure the display manager to use X11 for unattended access.", "不支持远程控制 Wayland 登录界面。若需要无人值守访问，请将显示管理器配置为使用 X11。"),

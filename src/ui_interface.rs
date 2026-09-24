@@ -423,7 +423,7 @@ pub fn set_option(key: String, value: String) {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let mut options = OPTIONS.lock().unwrap();
-        if value.is_empty() {
+        if value.is_empty() && key != "lan-allowed-networks" {
             options.remove(&key);
         } else {
             options.insert(key.clone(), value.clone());

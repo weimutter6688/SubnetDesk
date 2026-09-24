@@ -999,7 +999,7 @@ Future<void> showLanSettingsDialog(
     text: info['port']?.toString() ?? '21118',
   );
   final allowedNetworks = TextEditingController(
-    text: info['allowed_networks']?.toString() ?? '',
+    text: (info['allowed_networks']?.toString() ?? '').replaceAll(',', '\n'),
   );
   final webListenPort = TextEditingController(
     text: info['web_listen_port']?.toString() ?? '18123',
@@ -1248,11 +1248,13 @@ Future<void> showLanSettingsDialog(
                     const SizedBox(height: 14),
                     TextField(
                       controller: allowedNetworks,
+                      minLines: 3,
+                      maxLines: 9,
                       decoration: fieldDecoration(
                         label: translate('Network'),
                         icon: Icons.route_outlined,
                         help: translate(
-                          'Comma-separated CIDR ranges; blank uses safe LAN/VPN defaults',
+                          'Allowed source networks: one CIDR per line. Edit or delete any range. Empty blocks native incoming connections. Tailscale: 100.64.0.0/10; IPv6 is covered by fc00::/7.',
                         ),
                       ),
                     ),

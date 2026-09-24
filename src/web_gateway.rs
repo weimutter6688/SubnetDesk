@@ -1700,6 +1700,11 @@ mod tests {
             configured_network_value("", "192.168.0.0/16"),
             "192.168.0.0/16"
         );
+        let inherited_empty = configured_network_value("", "");
+        assert!(!crate::lan_server::source_allowed_with(
+            "100.81.211.45".parse().unwrap(),
+            &inherited_empty,
+        ));
     }
 
     #[test]

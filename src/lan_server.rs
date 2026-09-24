@@ -143,7 +143,7 @@ pub fn normalize_listen_addresses(value: &str) -> ResultType<String> {
 
 pub fn normalize_allowed_networks(value: &str) -> ResultType<String> {
     value
-        .split(',')
+        .split(|c: char| c == ',' || c.is_ascii_whitespace())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|network| {
@@ -315,27 +315,9 @@ pub fn source_allowed(ip: IpAddr) -> bool {
 
 pub(crate) fn source_allowed_with(ip: IpAddr, configured: &str) -> bool {
     let ip = normalize_source_ip(ip);
-    let networks: Vec<&str> = if configured.trim().is_empty() {
-        vec![
-            "10.0.0.0/8",
-            "172.16.0.0/12",
-            "192.168.0.0/16",
-            "100.64.0.0/10",
-            "127.0.0.0/8",
-            "169.254.0.0/16",
-            "fc00::/7",
-            "fe80::/10",
-            "::1/128",
-        ]
-    } else {
-        configured
-            .split(',')
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .collect()
-    };
-    networks
-        .iter()
+    configured
+        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+        .filter(|value| !value.is_empty())
         .filter_map(|value| IpCidr::from_str(value).ok())
         .any(|network| network.contains(ip))
 }
@@ -374,16 +356,16 @@ mod tests {
 
     #[test]
     fn default_policy_has_expected_private_networks() {
-        assert!(source_allowed_with("192.168.1.20".parse().unwrap(), ""));
+        assert!(source_allowed_with("192.168.1.20".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
         assert!(source_allowed_with(
             "::ffff:192.168.1.20".parse().unwrap(),
-            ""
+            hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS
         ));
-        assert!(source_allowed_with("::ffff:127.0.0.1".parse().unwrap(), ""));
-        assert!(source_allowed_with("100.64.10.2".parse().unwrap(), ""));
-        assert!(source_allowed_with("fd00::20".parse().unwrap(), ""));
-        assert!(!source_allowed_with("8.8.8.8".parse().unwrap(), ""));
-        assert!(!source_allowed_with("::ffff:8.8.8.8".parse().unwrap(), ""));
+        assert!(source_allowed_with("::ffff:127.0.0.1".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
+        assert!(source_allowed_with("100.64.10.2".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
+        assert!(source_allowed_with("fd00::20".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
+        assert!(!source_allowed_with("8.8.8.8".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
+        assert!(!source_allowed_with("::ffff:8.8.8.8".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
         assert!(source_allowed_with(
             "10.23.1.9".parse().unwrap(),
             "10.23.0.0/16"
@@ -396,6 +378,20 @@ mod tests {
             normalize_source_addr("[::ffff:192.168.1.20]:21118".parse().unwrap()),
             "192.168.1.20:21118".parse().unwrap()
         );
+    }
+
+    #[test]
+    fn removed_networks_and_empty_policy_stay_denied() {
+        for ip in ["10.0.0.1", "172.16.0.1", "192.168.1.1", "100.81.211.45", "fd7a:115c:a1e0::1", "::1"] {
+            assert!(!source_allowed_with(ip.parse().unwrap(), ""));
+            assert!(!source_allowed_with(ip.parse().unwrap(), "invalid"));
+        }
+        assert!(!source_allowed_with("100.81.211.45".parse().unwrap(), "192.168.0.0/16"));
+        assert!(source_allowed_with("100.81.211.45".parse().unwrap(), "192.168.0.0/16\n100.64.0.0/10"));
+        assert!(source_allowed_with("fd7a:115c:a1e0::1".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
+        assert!(!source_allowed_with("100.128.0.1".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
+        assert_eq!(normalize_allowed_networks(" \n ").unwrap(), "");
+        assert_eq!(normalize_allowed_networks("10.0.0.0/8\r\n100.64.0.0/10").unwrap(), "10.0.0.0/8,100.64.0.0/10");
     }
 
     #[test]

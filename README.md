@@ -124,6 +124,17 @@ The default credentials are shared by all copies; replace the password in LAN se
 
 As with any remote-control software, expose the listening port only to trusted networks, use a strong unique password, and verify fingerprints through a separate trusted channel when possible.
 
+
+### Network rules and connection quality
+
+LAN settings show the default allowed source networks: `10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, Tailscale's `100.64.0.0/10`, IPv6
+`fc00::/7` (including Tailscale IPv6), plus loopback and link-local ranges.
+Edit, add, or delete one CIDR per line; commas are also accepted. Existing custom
+rules are preserved. Saving an empty list denies new native connections and stays
+empty after restart. Web access inherits this list unless its own allowlist is set.
+These are source-address rules, not automatic detection of a VPN tunnel.
+
 There is no GitHub update checker, downloader, installer, or online help link in
 the application. Distribute updates manually over LAN/VPN or offline media.
 Build dependencies and repository documentation may still reference GitHub.

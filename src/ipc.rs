@@ -1508,7 +1508,7 @@ pub async fn get_option_async(key: &str) -> String {
 
 pub fn set_option(key: &str, value: &str) {
     let mut options = get_options();
-    if value.is_empty() {
+    if value.is_empty() && key != "lan-allowed-networks" {
         options.remove(key);
     } else {
         options.insert(key.to_owned(), value.to_owned());
