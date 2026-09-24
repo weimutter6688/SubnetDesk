@@ -1623,15 +1623,18 @@ mod tests {
 
     #[test]
     fn custom_certificate_and_key_must_be_paired_absolute_paths() {
+        let certificate_path = std::env::temp_dir().join("cert.pem");
+        let private_key_path = std::env::temp_dir().join("key.pem");
         assert!(custom_certificate_paths("", "").unwrap().is_none());
-        assert!(custom_certificate_paths("/tmp/cert.pem", "").is_err());
+        assert!(custom_certificate_paths(certificate_path.to_str().unwrap(), "").is_err());
         assert!(custom_certificate_paths("cert.pem", "key.pem").is_err());
         assert_eq!(
-            custom_certificate_paths(" /tmp/cert.pem ", " /tmp/key.pem ").unwrap(),
-            Some((
-                PathBuf::from("/tmp/cert.pem"),
-                PathBuf::from("/tmp/key.pem")
-            ))
+            custom_certificate_paths(
+                &format!(" {} ", certificate_path.display()),
+                &format!(" {} ", private_key_path.display()),
+            )
+            .unwrap(),
+            Some((certificate_path, private_key_path))
         );
     }
 

@@ -327,9 +327,14 @@ mod tests {
         let mut zip = fixture.bundle(&root);
         assert_eq!(zip.len(), 3);
         assert!(read(&mut zip, "logs/001.log").contains("failure <REDACTED>"));
-        let metadata = read(&mut zip, "diagnostics.json");
-        assert!(metadata.contains("service/current.log"));
-        assert!(!metadata.contains("old.log"));
+        let metadata: serde_json::Value =
+            serde_json::from_str(&read(&mut zip, "diagnostics.json")).unwrap();
+        let logs = metadata["logs"].as_array().unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(
+            Path::new(logs[0]["source"].as_str().unwrap()),
+            Path::new("service").join("current.log")
+        );
     }
 
     #[test]
