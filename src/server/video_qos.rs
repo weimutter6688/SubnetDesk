@@ -6,19 +6,16 @@ use std::{
 };
 
 /*
-SubnetDesk is LAN/VPN-only, so its default video profile starts at 100% custom
-quality and 60 FPS without WAN-style delay-based downshifts. Explicit client
-quality/FPS choices and decoder capacity feedback are still respected.
-
-The legacy ratio adjustment helpers remain available for encoder compatibility,
-but `abr_config` stays disabled in the LAN-only product path.
+LAN/VPN links can be bandwidth constrained. Start conservatively, reduce the
+bitrate before the frame budget, and recover gradually after congestion clears.
+Client quality/FPS choices are upper bounds; decoder feedback is also respected.
 */
 
 // Constants
 pub const FPS: u32 = 60;
 pub const MIN_FPS: u32 = 1;
 pub const MAX_FPS: u32 = 120;
-pub const INIT_FPS: u32 = FPS;
+pub const INIT_FPS: u32 = 30;
 
 // Bitrate ratio constants for different quality levels
 const BR_MAX: f32 = 40.0; // 2000 * 2 / 100
@@ -37,12 +34,14 @@ struct UserDelay {
     delay_history: VecDeque<u32>,
     fps: Option<u32>,
     rtt_calculator: RttCalculator,
+    response_elapsed: u32,
+    healthy_samples: u32,
 }
 
 impl UserDelay {
     fn add_delay(&mut self, delay: u32) {
         self.rtt_calculator.update(delay);
-        if self.delay_history.len() > HISTORY_DELAY_LEN {
+        if self.delay_history.len() >= HISTORY_DELAY_LEN {
             self.delay_history.pop_front();
         }
         self.delay_history.push_back(delay);
@@ -52,21 +51,43 @@ impl UserDelay {
     fn avg_delay(&self) -> u32 {
         let len = self.delay_history.len();
         if len > 0 {
-            let avg_delay = self.delay_history.iter().sum::<u32>() / len as u32;
+            let avg_delay = (self
+                .delay_history
+                .iter()
+                .map(|v| u64::from(*v))
+                .sum::<u64>()
+                / len as u64) as u32;
 
             // If RTT is available, subtract it from average delay to get actual network latency
             if let Some(rtt) = self.rtt_calculator.get_rtt() {
-                if avg_delay > rtt {
-                    avg_delay - rtt
-                } else {
-                    avg_delay
-                }
+                avg_delay.max(self.response_elapsed).saturating_sub(rtt)
             } else {
-                avg_delay
+                avg_delay.max(self.response_elapsed)
             }
         } else {
-            DELAY_THRESHOLD_150MS
+            self.response_elapsed.max(DELAY_THRESHOLD_150MS)
         }
+    }
+
+    fn adjust_frame_budget(&mut self, ceiling: u32) {
+        let current = self.fps.unwrap_or(INIT_FPS).min(ceiling);
+        let delay = self.avg_delay();
+        self.healthy_samples = if delay < 100 {
+            self.healthy_samples.saturating_add(1)
+        } else {
+            0
+        };
+        let next = if delay >= 500 {
+            (current / 2).max(5).min(current)
+        } else if delay >= 200 {
+            (current * 4 / 5).max(10).min(current)
+        } else if self.healthy_samples >= 3 {
+            self.healthy_samples = 0;
+            current + 5
+        } else {
+            current
+        };
+        self.fps = Some(next.clamp(MIN_FPS, ceiling));
     }
 }
 
@@ -96,25 +117,75 @@ pub struct VideoQoS {
     adjust_ratio_instant: Instant,
     abr_config: bool,
     new_user_instant: Instant,
+    profile: String,
+    adaptive_resolution: bool,
+    scale: u32,
+    congested_samples: u32,
+    clear_samples: u32,
+    pub capture_ms: u32,
+    pub encode_ms: u32,
+    pub send_ms: u32,
+    pub stream_size: (u32, u32),
 }
 
 impl Default for VideoQoS {
     fn default() -> Self {
         VideoQoS {
-            fps: FPS,
-            ratio: LAN_DEFAULT_BITRATE_RATIO,
+            fps: INIT_FPS,
+            ratio: BR_BALANCED,
             users: Default::default(),
             displays: Default::default(),
             bitrate_store: 0,
             adjust_ratio_instant: Instant::now(),
-            abr_config: false,
+            abr_config: true,
             new_user_instant: Instant::now(),
+            profile: "latency".into(),
+            adaptive_resolution: false,
+            scale: 1,
+            congested_samples: 0,
+            clear_samples: 0,
+            capture_ms: 0,
+            encode_ms: 0,
+            send_ms: 0,
+            stream_size: (0, 0),
         }
     }
 }
 
 // Basic functionality
 impl VideoQoS {
+    pub fn set_profile(&mut self, profile: &str, adaptive_resolution: Option<bool>) {
+        if matches!(profile, "latency" | "text" | "quality") {
+            self.profile = profile.into();
+        }
+        if let Some(enabled) = adaptive_resolution {
+            self.adaptive_resolution = enabled;
+        }
+        if self.profile != "latency" || !self.adaptive_resolution {
+            self.scale = 1;
+        }
+    }
+
+    pub fn resolution_divisor(&self) -> u32 {
+        if self.record() { 1 } else { self.scale }
+    }
+
+    fn update_resolution(&mut self) {
+        let delay = self.users.values().map(|u| u.delay.avg_delay()).max().unwrap_or(0);
+        self.congested_samples = if delay >= 250 { self.congested_samples + 1 } else { 0 };
+        self.clear_samples = if delay < 80 { self.clear_samples + 1 } else { 0 };
+        if self.profile == "latency" && self.adaptive_resolution {
+            if self.congested_samples >= 3 {
+                self.scale = (self.scale * 2).min(4);
+                self.congested_samples = 0;
+                self.clear_samples = 0;
+            } else if self.clear_samples >= 15 {
+                self.scale = (self.scale / 2).max(1);
+                self.clear_samples = 0;
+            }
+        }
+    }
+
     // Calculate seconds per frame based on current FPS
     pub fn spf(&self) -> Duration {
         Duration::from_secs_f32(1. / (self.fps() as f32))
@@ -170,9 +241,6 @@ impl VideoQoS {
     // Initialize new user session
     pub fn on_connection_open(&mut self, id: i32) {
         self.users.insert(id, UserData::default());
-        // SubnetDesk only accepts LAN/VPN direct connections. Do not apply the
-        // WAN-oriented bitrate ramp and delay-based quality reduction by default.
-        self.abr_config = false;
         self.new_user_instant = Instant::now();
     }
 
@@ -191,6 +259,7 @@ impl VideoQoS {
         if let Some(user) = self.users.get_mut(&id) {
             user.custom_fps = Some(fps);
         }
+        self.adjust_fps();
     }
 
     pub fn user_auto_adjust_fps(&mut self, id: i32, fps: u32) {
@@ -200,6 +269,7 @@ impl VideoQoS {
         if let Some(user) = self.users.get_mut(&id) {
             user.auto_adjust_fps = Some(fps);
         }
+        self.adjust_fps();
     }
 
     pub fn user_image_quality(&mut self, id: i32, image_quality: i32) {
@@ -220,7 +290,7 @@ impl VideoQoS {
         if let Some(user) = self.users.get_mut(&id) {
             user.quality = quality;
             // update ratio directly
-            self.ratio = self.latest_quality().ratio();
+            self.ratio = self.ratio.min(self.latest_quality().ratio());
         }
     }
 
@@ -234,18 +304,26 @@ impl VideoQoS {
         let highest_fps = self.highest_fps();
         if let Some(user) = self.users.get_mut(&id) {
             let delay = delay.max(10);
+            user.delay.response_elapsed = 0;
             user.delay.add_delay(delay);
-            user.delay.fps = Some(highest_fps);
+            user.delay.adjust_frame_budget(highest_fps);
         }
         self.adjust_fps();
+        self.update_resolution();
     }
 
     pub fn user_delay_response_elapsed(&mut self, id: i32, elapsed: u128) {
+        let highest_fps = self.highest_fps();
         if let Some(user) = self.users.get_mut(&id) {
-            if elapsed > 2000 {
-                user.delay.add_delay(elapsed as u32);
+            if elapsed >= 1000 {
+                // An outstanding probe is a lower bound, not a completed RTT
+                // sample. Do not let a stalled connection redefine baseline RTT.
+                user.delay.response_elapsed = elapsed.min(u32::MAX as u128) as u32;
+                user.delay.adjust_frame_budget(highest_fps);
             }
         }
+        self.adjust_fps();
+        self.update_resolution();
     }
 }
 
@@ -267,7 +345,16 @@ impl VideoQoS {
         self.adjust_fps();
         let abr_enabled = self.in_vbr_state();
         if abr_enabled {
-            if self.adjust_ratio_instant.elapsed().as_secs() >= ADJUST_RATIO_INTERVAL as u64 {
+            let congested = self
+                .users
+                .values()
+                .any(|u| u.delay.avg_delay() >= DELAY_THRESHOLD_150MS);
+            let interval = if congested {
+                1
+            } else {
+                ADJUST_RATIO_INTERVAL as u64
+            };
+            if self.adjust_ratio_instant.elapsed().as_secs() >= interval {
                 let dynamic_screen = self
                     .displays
                     .iter()
@@ -285,7 +372,8 @@ impl VideoQoS {
     #[inline]
     fn highest_fps(&self) -> u32 {
         let user_fps = |u: &UserData| {
-            let mut fps = u.custom_fps.unwrap_or(FPS);
+            let profile_cap = match self.profile.as_str() { "text" => 30, "quality" => 45, _ => MAX_FPS };
+            let mut fps = u.custom_fps.unwrap_or(FPS).min(profile_cap);
             if let Some(auto_adjust_fps) = u.auto_adjust_fps {
                 if fps == 0 || auto_adjust_fps < fps {
                     fps = auto_adjust_fps;
@@ -348,7 +436,7 @@ impl VideoQoS {
         };
 
         // Set minimum ratio based on quality mode
-        let min = match target_quality {
+        let mut min = match target_quality {
             Quality::Best => {
                 // For Best quality, ensure minimum 1Mbps for high resolution
                 let mut min = BR_BEST / 2.5;
@@ -372,6 +460,8 @@ impl VideoQoS {
             Quality::Custom(_) => BR_MIN_HIGH_RESOLUTION,
         };
         let max = target_ratio * MAX_BR_MULTIPLE;
+        if self.profile == "text" { min = min.max(0.2).min(max); }
+        if self.profile == "quality" { min = min.max(0.4).min(max); }
 
         let mut v = current_ratio;
 
@@ -389,13 +479,13 @@ impl VideoQoS {
                 v = current_ratio * 1.05;
             }
         } else if max_delay < 200 {
-            v = current_ratio * 0.95;
-        } else if max_delay < 300 {
             v = current_ratio * 0.9;
-        } else if max_delay < 500 {
-            v = current_ratio * 0.85;
-        } else {
+        } else if max_delay < 300 {
             v = current_ratio * 0.8;
+        } else if max_delay < 500 {
+            v = current_ratio * 0.65;
+        } else {
+            v = current_ratio * 0.5;
         }
 
         // Limit quality increase rate for better stability
@@ -433,6 +523,54 @@ impl VideoQoS {
 
         // Ensure fps stays within valid range
         self.fps = fps.clamp(MIN_FPS, highest_fps);
+    }
+}
+
+/// Feedback is scoped to a viewer. A stalled viewer must not lower another's budget.
+#[derive(Default)]
+pub struct VideoQoSRegistry {
+    peers: HashMap<i32, VideoQoS>,
+}
+
+impl VideoQoSRegistry {
+    pub fn peer(&mut self, id: i32) -> &mut VideoQoS {
+        self.peers.entry(id).or_insert_with(|| {
+            let mut qos = VideoQoS::default();
+            qos.on_connection_open(id);
+            qos
+        })
+    }
+    pub fn on_connection_open(&mut self, id: i32) { self.peer(id); }
+    pub fn on_connection_close(&mut self, id: i32) { self.peers.remove(&id); }
+    pub fn bitrate(&self, id: i32) -> u32 { self.peers.get(&id).map_or(0, VideoQoS::bitrate) }
+    pub fn report(&self, id: i32) -> TestDelay {
+        self.peers.get(&id).map_or_else(TestDelay::new, |q| TestDelay {
+            target_bitrate: q.bitrate(), capture_ms: q.capture_ms,
+            encode_ms: q.encode_ms, send_ms: q.send_ms,
+            stream_width: q.stream_size.0, stream_height: q.stream_size.1,
+            ..Default::default()
+        })
+    }
+    pub fn user_custom_fps(&mut self, id: i32, fps: u32) {
+        if let Some(q) = self.peers.get_mut(&id) { q.user_custom_fps(id, fps); }
+    }
+    pub fn user_auto_adjust_fps(&mut self, id: i32, fps: u32) {
+        if let Some(q) = self.peers.get_mut(&id) { q.user_auto_adjust_fps(id, fps); }
+    }
+    pub fn user_image_quality(&mut self, id: i32, quality: i32) {
+        if let Some(q) = self.peers.get_mut(&id) { q.user_image_quality(id, quality); }
+    }
+    pub fn user_record(&mut self, id: i32, record: bool) {
+        if let Some(q) = self.peers.get_mut(&id) { q.user_record(id, record); }
+    }
+    pub fn user_network_delay(&mut self, id: i32, delay: u32) {
+        if let Some(q) = self.peers.get_mut(&id) { q.user_network_delay(id, delay); }
+    }
+    pub fn user_delay_response_elapsed(&mut self, id: i32, elapsed: u128) {
+        if let Some(q) = self.peers.get_mut(&id) { q.user_delay_response_elapsed(id, elapsed); }
+    }
+    pub fn remove_display(&mut self, name: &str) {
+        for q in self.peers.values_mut() { q.remove_display(name); }
     }
 }
 
@@ -495,35 +633,175 @@ impl RttCalculator {
 }
 
 #[cfg(test)]
+#[path = "weak_network_tests.rs"]
+mod weak_network_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn lan_profile_starts_with_full_quality_and_sixty_fps() {
-        let qos = VideoQoS::default();
-
-        assert_eq!(qos.fps(), 60);
-        assert_eq!(qos.latest_quality().ratio(), 2.0);
+    fn slow_viewer_and_its_quality_changes_do_not_throttle_healthy_viewer() {
+        let mut registry = VideoQoSRegistry::default();
+        for id in [1, 2] {
+            let q = registry.peer(id);
+            q.new_display("monitor0".into());
+            q.set_support_changing_quality("monitor0", true);
+            q.new_user_instant = Instant::now() - Duration::from_secs(2);
+            for _ in 0..10 { q.user_network_delay(id, 10); }
+        }
+        for _ in 0..40 {
+            registry.user_network_delay(1, 10);
+            registry.user_network_delay(2, 1000);
+            registry.peer(1).adjust_ratio(true);
+            registry.peer(2).adjust_ratio(true);
+        }
+        registry.user_custom_fps(2, 8);
+        registry.user_image_quality(2, ImageQuality::Low.value());
+        assert_eq!(registry.peer(1).fps(), 60);
+        assert!(registry.peer(2).fps() <= 10);
+        assert!(registry.peer(1).ratio() > registry.peer(2).ratio());
+        registry.on_connection_close(2);
+        assert_eq!(registry.peer(1).fps(), 60);
     }
 
     #[test]
-    fn lan_network_delay_does_not_throttle_the_frame_budget() {
+    fn latency_scaling_requires_capability_and_sustained_congestion() {
+        let mut q = active_qos();
+        q.set_profile("latency", Some(true));
+        q.user_network_delay(1, 800);
+        assert_eq!(q.resolution_divisor(), 1);
+        for _ in 0..5 { q.user_network_delay(1, 800); }
+        assert_eq!(q.resolution_divisor(), 4);
+        q.user_network_delay(1, 10);
+        assert_eq!(q.resolution_divisor(), 4);
+        for _ in 0..35 { q.user_network_delay(1, 10); }
+        assert_eq!(q.resolution_divisor(), 1);
+        q.set_profile("text", Some(true));
+        for _ in 0..8 { q.user_network_delay(1, 800); }
+        assert_eq!(q.resolution_divisor(), 1);
+        q.set_profile("latency", Some(false));
+        for _ in 0..8 { q.user_network_delay(1, 800); }
+        assert_eq!(q.resolution_divisor(), 1);
+    }
+
+    fn active_qos() -> VideoQoS {
         let mut qos = VideoQoS::default();
         qos.on_connection_open(1);
-
-        qos.user_network_delay(1, 750);
-
-        assert_eq!(qos.fps(), 60);
+        qos.new_display("monitor_0".into());
+        qos.set_support_changing_quality("monitor_0", true);
+        qos
     }
 
     #[test]
-    fn explicit_client_frame_cap_is_still_respected() {
-        let mut qos = VideoQoS::default();
-        qos.on_connection_open(1);
-        qos.user_custom_fps(1, 30);
-
-        qos.user_network_delay(1, 10);
-
+    fn startup_limits_burst_and_healthy_link_recovers() {
+        let mut qos = active_qos();
         assert_eq!(qos.fps(), 30);
+        assert_eq!(qos.ratio(), BR_BALANCED);
+        qos.new_user_instant = Instant::now() - Duration::from_secs(2);
+        for _ in 0..30 {
+            qos.user_network_delay(1, 10);
+            qos.adjust_ratio(true);
+        }
+        assert_eq!(qos.fps(), 60);
+        assert_eq!(qos.ratio(), LAN_DEFAULT_BITRATE_RATIO);
+    }
+
+    #[test]
+    fn congestion_reduces_bitrate_and_frame_budget_then_recovers_gradually() {
+        let mut qos = active_qos();
+        qos.new_user_instant = Instant::now() - Duration::from_secs(2);
+        for _ in 0..30 {
+            qos.user_network_delay(1, 20);
+        }
+        let initial_ratio = qos.ratio();
+        for _ in 0..4 {
+            qos.user_network_delay(1, 800);
+            qos.adjust_ratio(true);
+        }
+        assert!(qos.fps() <= 10);
+        assert!(qos.ratio() < initial_ratio / 2.0);
+        assert!(qos.ratio() >= BR_MIN_HIGH_RESOLUTION);
+        qos.user_network_delay(1, 20);
+        assert!(qos.fps() <= 10); // Do not rebound on a single good sample.
+        for _ in 0..40 {
+            qos.user_network_delay(1, 20);
+            qos.adjust_ratio(true);
+        }
+        assert_eq!(qos.fps(), 60);
+        assert!(qos.ratio() > initial_ratio);
+        assert!(qos.ratio() <= qos.latest_quality().ratio());
+    }
+
+    #[test]
+    fn stable_vpn_rtt_is_not_mistaken_for_queued_video() {
+        let mut qos = active_qos();
+        qos.new_user_instant = Instant::now() - Duration::from_secs(2);
+        for _ in 0..60 {
+            qos.user_network_delay(1, 250);
+        }
+        assert_eq!(qos.users[&1].delay.avg_delay(), 0);
+        assert_eq!(qos.fps(), 60);
+    }
+
+    #[test]
+    fn missing_response_throttles_without_poisoning_rtt_baseline() {
+        let mut qos = active_qos();
+        qos.new_user_instant = Instant::now() - Duration::from_secs(2);
+        for _ in 0..15 {
+            qos.user_network_delay(1, 20);
+        }
+        let previous_fps = qos.fps();
+        let baseline = qos.users[&1].delay.rtt_calculator.get_rtt();
+        qos.user_delay_response_elapsed(1, 3000);
+        qos.adjust_ratio(true);
+        assert!(qos.fps() <= previous_fps / 2);
+        assert!(qos.ratio() < BR_BALANCED);
+        assert_eq!(qos.users[&1].delay.rtt_calculator.get_rtt(), baseline);
+    }
+
+    #[test]
+    fn decoder_and_user_caps_are_respected_for_multiple_viewers() {
+        let mut qos = active_qos();
+        qos.on_connection_open(2);
+        qos.user_custom_fps(1, 20);
+        qos.user_auto_adjust_fps(2, 12);
+        qos.user_image_quality(1, ImageQuality::Low.value());
+        for _ in 0..20 {
+            qos.user_network_delay(1, 10);
+            qos.user_network_delay(2, 10);
+            qos.adjust_ratio(true);
+        }
+        assert_eq!(qos.fps(), 12);
+        assert!(qos.ratio() <= BR_SPEED);
+        qos.user_network_delay(2, 1000);
+        assert!(qos.fps() < 12);
+        qos.on_connection_close(2);
+        for _ in 0..20 {
+            qos.user_network_delay(1, 10);
+        }
+        assert_eq!(qos.fps(), 20);
+    }
+
+    #[test]
+    fn unsupported_encoder_still_adapts_fps_without_quality_restarts() {
+        let mut qos = active_qos();
+        qos.set_support_changing_quality("monitor_0", false);
+        qos.user_network_delay(1, 900);
+        let ratio = qos.ratio();
+        qos.adjust_ratio(true);
+        assert!(!qos.in_vbr_state());
+        assert_eq!(qos.ratio(), ratio);
+        assert!(qos.fps() < INIT_FPS);
+    }
+
+    #[test]
+    fn delay_history_stays_bounded_and_handles_large_samples() {
+        let mut delay = UserDelay::default();
+        for _ in 0..5 {
+            delay.add_delay(u32::MAX);
+        }
+        assert_eq!(delay.delay_history.len(), HISTORY_DELAY_LEN);
+        assert_eq!(delay.avg_delay(), u32::MAX);
     }
 }

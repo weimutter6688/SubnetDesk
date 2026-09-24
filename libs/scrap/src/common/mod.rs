@@ -201,7 +201,7 @@ impl Frame<'_> {
     ) -> ResultType<EncodeInput<'a>> {
         match self {
             Frame::PixelBuffer(pixelbuffer) => {
-                convert_to_yuv(&pixelbuffer, yuvfmt, yuv, mid_data)?;
+                convert_to_yuv(pixelbuffer, yuvfmt, yuv, mid_data)?;
                 Ok(EncodeInput::YUV(yuv))
             }
             Frame::Texture(texture) => Ok(EncodeInput::Texture(*texture)),

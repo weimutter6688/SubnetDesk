@@ -1,3 +1,4 @@
+import 'reconnect_policy.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -121,7 +122,7 @@ class FfiModel with ChangeNotifier {
   Timer? _timer;
   Timer? _restartReconnectDelayTimer;
   var _reconnects = 1;
-  DateTime? _offlineReconnectStartTime;
+  final _transportReconnect = ReconnectPolicy();
   bool _viewOnly = false;
   bool _showMyCursor = false;
   WeakReference<FFI> parent;
@@ -741,6 +742,8 @@ class FfiModel with ChangeNotifier {
 
   cancelMsgBox(Map<String, dynamic> evt, SessionID sessionId) {
     if (parent.target == null) return;
+    _timer?.cancel();
+    _timer = null;
     final dialogManager = parent.target!.dialogManager;
     final tag = '$sessionId-${evt['tag']}';
     dialogManager.dismissByTag(tag);
@@ -867,45 +870,17 @@ class FfiModel with ChangeNotifier {
         dialogManager,
       );
     } else {
-      var hasRetry = evt['hasRetry'] == 'true';
-      if (!hasRetry) {
-        hasRetry = shouldAutoRetryOnOffline(type, title, text);
-      }
-      showMsgBox(sessionId, type, title, text, link, hasRetry, dialogManager);
+      final autoRetry = _transportReconnect.shouldRetry(
+        established: _pi.isSet.isTrue, type: type ?? '', title: title ?? '',
+        text: text ?? '', now: DateTime.now());
+      final hasRetry = evt['hasRetry'] == 'true' || autoRetry;
+      showMsgBox(sessionId, type, title, text, link, hasRetry, dialogManager, autoRetry: autoRetry);
     }
   }
 
   void resetRestartReconnectState() {
     _restartReconnectDelayTimer?.cancel();
     _restartReconnectDelayTimer = null;
-  }
-
-  /// Auto-retry check for "Remote desktop is offline" error.
-  /// returns true to auto-retry, false otherwise.
-  bool shouldAutoRetryOnOffline(String type, String title, String text) {
-    if (type == 'error' &&
-        title == 'Connection Error' &&
-        text == 'Remote desktop is offline' &&
-        _pi.isSet.isTrue) {
-      // Auto retry for ~30s (server's peer offline threshold) when controlled peer's account changes
-      // (e.g., signout, switch user, login into OS) causes temporary offline via websocket/tcp connection.
-      // The actual wait may exceed 30s (e.g., 20s elapsed + 16s next retry = 36s), which is acceptable
-      // since the controlled side reconnects quickly after account changes.
-      // Uses time-based check instead of _reconnects count because user can manually retry.
-      // https://github.com/rustdesk/rustdesk/discussions/14048
-      if (_offlineReconnectStartTime == null) {
-        // First offline, record time and start retry
-        _offlineReconnectStartTime = DateTime.now();
-        return true;
-      } else {
-        final elapsed =
-            DateTime.now().difference(_offlineReconnectStartTime!).inSeconds;
-        if (elapsed < 30) {
-          return true;
-        }
-      }
-    }
-    return false;
   }
 
   handleToast(Map<String, dynamic> evt, SessionID sessionId, String peerId) {
@@ -949,6 +924,7 @@ class FfiModel with ChangeNotifier {
     bool hasRetry,
     OverlayDialogManager dialogManager, {
     bool? hasCancel,
+    bool autoRetry = false,
   }) async {
     final noteAllowed = parent.target != null &&
         allowAskForNoteAtEndOfConnection(parent.target, false) &&
@@ -987,19 +963,20 @@ class FfiModel with ChangeNotifier {
         dialogManager,
         hasCancel: hasCancel,
         reconnect: hasRetry ? reconnect : null,
-        reconnectTimeout: hasRetry ? _reconnects : null,
+        reconnectTimeout: hasRetry && autoRetry ? _reconnects : null,
         onSubmit: onSubmit,
       );
     }
     _timer?.cancel();
-    if (hasRetry) {
+    if (hasRetry && autoRetry) {
       _timer = Timer(Duration(seconds: _reconnects), () {
+        if (parent.target?.closed != false) return;
         reconnect(dialogManager, sessionId, false);
       });
-      _reconnects *= 2;
+      _reconnects = nextReconnectDelay(_reconnects);
     } else {
       _reconnects = 1;
-      _offlineReconnectStartTime = null;
+      _transportReconnect.reset();
     }
   }
 
@@ -1019,6 +996,9 @@ class FfiModel with ChangeNotifier {
     SessionID sessionId,
     bool _manual,
   ) {
+    _timer?.cancel();
+    _timer = null;
+    if (_manual) { _transportReconnect.reset(); _reconnects = 1; }
     // Disable relative mouse mode before reconnecting to ensure cursor is released.
     parent.target?.inputModel.setRelativeMouseMode(false);
     _cancelPendingMonitorRestore();
@@ -1228,7 +1208,7 @@ class FfiModel with ChangeNotifier {
       }
       if (displays.isNotEmpty) {
         _reconnects = 1;
-        _offlineReconnectStartTime = null;
+        _transportReconnect.reset();
         resetRestartReconnectState();
         waitForFirstImage.value = true;
         isRefreshing = false;
@@ -3438,6 +3418,17 @@ class CursorModel with ChangeNotifier {
 }
 
 class QualityMonitorData {
+  Map<String, dynamic> serverTiming = {};
+  Map<String, dynamic> decoderTiming = {};
+  String get bottleneck {
+    if ((fps ?? '').split(' ').every((v) => (int.tryParse(v) ?? 0) == 0)) return 'Idle';
+    int value(Map<String, dynamic> values, String key) => (values[key] as num?)?.toInt() ?? 0;
+    if (value(decoderTiming, 'queue') > 50 || value(decoderTiming, 'decode') > 40) return 'Decoding';
+    if (value(serverTiming, 'send') > 150 || (int.tryParse(delay ?? '') ?? 0) > 200) return 'Network';
+    if (value(serverTiming, 'encode') > 40) return 'Encoding';
+    if (value(serverTiming, 'capture') > 40) return 'Capture';
+    return 'Normal';
+  }
   String? speed;
   String? fps;
   String? delay;
@@ -3470,6 +3461,16 @@ class QualityMonitorModel with ChangeNotifier {
 
   updateQualityStatus(Map<String, dynamic> evt) {
     try {
+      if ((evt['server_timing'] as String? ?? '').isNotEmpty) {
+        _data.serverTiming = jsonDecode(evt['server_timing']);
+      }
+      if ((evt['decoder_timing'] as String? ?? '').isNotEmpty) {
+        final timing = jsonDecode(evt['decoder_timing']) as Map<String, dynamic>;
+        final current = parent.target?.ffiModel.pi.currentDisplay;
+        if (current == null || current == kAllDisplayValue || timing['display'] == current) {
+          _data.decoderTiming = timing;
+        }
+      }
       if (evt.containsKey('speed') && (evt['speed'] as String).isNotEmpty) {
         _data.speed = evt['speed'];
       }

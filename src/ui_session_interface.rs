@@ -678,6 +678,14 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     pub fn set_option(&self, k: String, mut v: String) {
+        if k == "connection-profile" {
+            if !matches!(v.as_str(), "latency" | "text" | "quality") { return; }
+            let mut misc = Misc::new();
+            misc.set_option(OptionMessage { connection_profile: v.clone(), ..Default::default() });
+            let mut msg = Message::new();
+            msg.set_misc(misc);
+            self.send(Data::Message(msg));
+        }
         let mut lc = self.lc.write().unwrap();
         if k.eq("remote_dir") {
             v = lc.get_all_remote_dir(v);
@@ -1971,6 +1979,10 @@ impl<T: InvokeUiSession> Interface for Session<T> {
             self.update_quality_status(QualityStatus {
                 delay: Some(t.last_delay as _),
                 target_bitrate: Some(t.target_bitrate as _),
+                server_timing: Some(serde_json::json!({
+                    "capture": t.capture_ms, "encode": t.encode_ms, "send": t.send_ms,
+                    "width": t.stream_width, "height": t.stream_height,
+                }).to_string()),
                 ..Default::default()
             });
             handle_test_delay(t, peer).await;

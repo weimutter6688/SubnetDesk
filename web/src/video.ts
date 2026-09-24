@@ -4,7 +4,6 @@ import type { ProtocolVideoCodec } from "./capabilities";
 interface VideoDecodeQueue {
   readonly decodeQueueSize?: number;
   decode(chunk: EncodedVideoChunk): void;
-  reset?(): void;
 }
 
 interface ClosableVideoDecoder {
@@ -27,6 +26,11 @@ export interface DecoderRecoveryState {
 }
 
 const MAX_DECODE_QUEUE_SIZE = 6;
+const KEY_FRAME_REQUEST_INTERVAL_MS = 1_000;
+
+export function shouldRequestKeyFrame(lastRequestedAt: number | undefined, now: number): boolean {
+  return lastRequestedAt === undefined || now - lastRequestedAt >= KEY_FRAME_REQUEST_INTERVAL_MS;
+}
 
 export function initialDecoderRecoveryState(maxAttempts = 1): DecoderRecoveryState {
   return { attempts: 0, maxAttempts };
@@ -74,29 +78,24 @@ export function decodeVideoBatch(
   if (!frames) return previousState;
 
   let timestamp = previousState.timestamp;
-  let awaitingKeyFrame =
-    previousState.awaitingKeyFrame || (decoder.decodeQueueSize ?? 0) > MAX_DECODE_QUEUE_SIZE;
+  let awaitingKeyFrame = previousState.awaitingKeyFrame;
   let droppedFrames = previousState.droppedFrames;
-  let resetForKeyFrame = false;
   for (const encoded of frames) {
     const sourceTimestamp = Number(encoded.pts);
     timestamp = Number.isSafeInteger(sourceTimestamp) && sourceTimestamp > timestamp
       ? sourceTimestamp
       : timestamp + 1;
-    if (awaitingKeyFrame && !encoded.key) {
-      droppedFrames += 1;
-      continue;
-    }
-    if (awaitingKeyFrame && encoded.key) {
-      decoder.reset?.();
-      awaitingKeyFrame = false;
-      resetForKeyFrame = true;
-    }
-    if (!resetForKeyFrame && (decoder.decodeQueueSize ?? 0) > MAX_DECODE_QUEUE_SIZE) {
+    if ((decoder.decodeQueueSize ?? 0) >= MAX_DECODE_QUEUE_SIZE) {
       awaitingKeyFrame = true;
       droppedFrames += 1;
       continue;
     }
+    if (awaitingKeyFrame && !encoded.key) {
+      droppedFrames += 1;
+      continue;
+    }
+    // A key frame restores references without reset(), which would unconfigure WebCodecs.
+    awaitingKeyFrame = false;
     decoder.decode(
       createChunk({
         type: encoded.key ? "key" : "delta",

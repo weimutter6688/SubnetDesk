@@ -9,7 +9,6 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, Host, StreamConfig,
 };
-use crossbeam_queue::ArrayQueue;
 use magnum_opus::{Channels::*, Decoder as AudioDecoder};
 #[cfg(not(target_os = "linux"))]
 use ringbuf::{ring_buffer::RbBase, Rb};
@@ -81,13 +80,14 @@ pub use super::lang::*;
 pub mod file_trait;
 pub mod helper;
 pub mod io_loop;
+mod lan_connect;
 pub mod screenshot;
+mod video_queue;
 
 pub const MILLI1: Duration = Duration::from_millis(1);
 pub const SEC30: Duration = Duration::from_secs(30);
 // Empirical restart reconnect grace window.
 const RESTART_REMOTE_DEVICE_GRACE: Duration = Duration::from_secs(5 * 60);
-pub const VIDEO_QUEUE_SIZE: usize = 120;
 const MAX_DECODE_FAIL_COUNTER: usize = 3;
 
 #[cfg(target_os = "linux")]
@@ -277,48 +277,47 @@ impl Client {
         let mut errors = Vec::new();
 
         loop {
-            for candidate in std::mem::take(&mut candidates) {
-                if !attempted.insert(candidate.clone()) {
-                    continue;
+            let batch = std::mem::take(&mut candidates)
+                .into_iter()
+                .filter(|candidate| attempted.insert(candidate.clone()))
+                .collect();
+            let connected = lan_connect::race_candidates(batch, |candidate| {
+                let expected = expected_fingerprint.as_deref();
+                let requested = requested.as_str();
+                async move {
+                    let timeout_ms = if expected.is_some() {
+                        Self::KNOWN_DEVICE_CONNECT_TIMEOUT
+                    } else {
+                        CONNECT_TIMEOUT
+                    };
+                    let endpoint = hbb_common::lan::Endpoint::parse(&candidate)?;
+                    let mut stream = connect_tcp_local(endpoint.authority(), None, timeout_ms)
+                        .await
+                        .with_context(|| format!("{endpoint}"))?;
+                    let identity = timeout(
+                        timeout_ms,
+                        crate::lan_protocol::client_handshake(&mut stream),
+                    )
+                    .await
+                    .with_context(|| format!("{endpoint}: handshake timed out"))??;
+                    if let Some(expected) = expected {
+                        if !identity.fingerprint.eq_ignore_ascii_case(expected) {
+                            // Only the explicitly requested address may prompt for a changed
+                            // identity. An untrusted fallback must never win the race.
+                            if candidate != requested {
+                                bail!("{endpoint}: fallback fingerprint mismatch");
+                            }
+                            log::warn!("LAN endpoint {endpoint} changed identity; requesting user confirmation");
+                        }
+                    }
+                    Ok((stream, identity, endpoint))
                 }
-                let timeout = if expected_fingerprint.is_some() {
-                    Self::KNOWN_DEVICE_CONNECT_TIMEOUT
-                } else {
-                    CONNECT_TIMEOUT
-                };
-                let endpoint = match hbb_common::lan::Endpoint::parse(&candidate) {
-                    Ok(endpoint) => endpoint,
-                    Err(err) => {
-                        errors.push(format!("{candidate}: {err}"));
-                        continue;
-                    }
-                };
-                let mut stream = match connect_tcp_local(endpoint.authority(), None, timeout).await
-                {
-                    Ok(stream) => stream,
-                    Err(err) => {
-                        errors.push(format!("{endpoint}: {err}"));
-                        continue;
-                    }
-                };
-                let identity = match crate::lan_protocol::client_handshake(&mut stream).await {
-                    Ok(identity) => identity,
-                    Err(err) => {
-                        errors.push(format!("{endpoint}: {err}"));
-                        continue;
-                    }
-                };
-                if let Some(expected) = expected_fingerprint.as_ref() {
-                    if !identity.fingerprint.eq_ignore_ascii_case(expected) {
-                        log::warn!(
-                            "LAN endpoint {} presented fingerprint {}, expected {}; requesting user confirmation",
-                            endpoint,
-                            identity.fingerprint,
-                            expected
-                        );
-                    }
+            })
+            .await;
+            if let Ok((stream, identity, endpoint)) = connected {
+                if let Some(task) = discovery.take() {
+                    task.abort();
                 }
-
                 let connected_endpoint = endpoint.authority().to_owned();
                 interface.get_lch().write().unwrap().lan_connected_endpoint =
                     connected_endpoint.clone();
@@ -328,6 +327,8 @@ impl Client {
                     identity.fingerprint
                 );
                 return Ok((stream, identity.device_public_key, connected_endpoint));
+            } else if let Err(err) = connected {
+                errors.push(format!("{err:#}"));
             }
 
             if let Some(discovery) = discovery.take() {
@@ -1576,6 +1577,8 @@ impl LoginConfigHandler {
             }
         }
         let q = self.image_quality.clone();
+        msg.connection_profile = self.options.get("connection-profile").cloned().unwrap_or_else(|| "latency".into());
+        msg.adaptive_resolution = if use_texture_render() { BoolOption::Yes } else { BoolOption::No }.into();
         if let Some(q) = self.get_image_quality_enum(&q, ignore_default) {
             msg.image_quality = q.into();
         } else if q == "custom" {
@@ -2100,7 +2103,6 @@ impl LoginConfigHandler {
 /// Media data.
 pub enum MediaData {
     VideoQueue,
-    VideoFrame(Box<VideoFrame>),
     AudioFrame(Box<AudioFrame>),
     AudioFormat(AudioFormat),
     Reset,
@@ -2118,10 +2120,9 @@ pub fn start_video_thread<F, T>(
     session: Session<T>,
     display: usize,
     video_receiver: mpsc::Receiver<MediaData>,
-    video_queue: Arc<RwLock<ArrayQueue<VideoFrame>>>,
+    video_queue: Arc<RwLock<video_queue::VideoQueue>>,
     fps: Arc<RwLock<Option<usize>>>,
     chroma: Arc<RwLock<Option<Chroma>>>,
-    discard_queue: Arc<RwLock<bool>>,
     video_callback: F,
 ) where
     F: 'static + FnMut(usize, &mut scrap::ImageRgb, *mut c_void, bool) + Send,
@@ -2139,30 +2140,27 @@ pub fn start_video_thread<F, T>(
         let mut count = 0;
         let mut duration = std::time::Duration::ZERO;
         let mut skip_beginning = 0;
+        let mut timing_samples = std::collections::VecDeque::new();
+        let mut timing_report = std::time::Instant::now();
         loop {
-            if let Ok(data) = video_receiver.recv() {
+            let incoming = match video_receiver.try_recv() {
+                Ok(data) => {
+                    if matches!(data, MediaData::VideoQueue) { video_queue.write().unwrap().wake_consumed(); }
+                    Ok(data)
+                }
+                Err(mpsc::TryRecvError::Empty) if video_queue.read().unwrap().len() > 0 => Ok(MediaData::VideoQueue),
+                Err(mpsc::TryRecvError::Empty) => video_receiver.recv().map(|data| {
+                    if matches!(data, MediaData::VideoQueue) { video_queue.write().unwrap().wake_consumed(); }
+                    data
+                }),
+                Err(mpsc::TryRecvError::Disconnected) => break,
+            };
+            if let Ok(data) = incoming {
                 match data {
-                    MediaData::VideoFrame(_) | MediaData::VideoQueue => {
-                        let vf = match data {
-                            MediaData::VideoFrame(vf) => {
-                                *discard_queue.write().unwrap() = false;
-                                *vf
-                            }
-                            MediaData::VideoQueue => {
-                                if let Some(vf) = video_queue.read().unwrap().pop() {
-                                    if discard_queue.read().unwrap().clone() {
-                                        continue;
-                                    }
-                                    vf
-                                } else {
-                                    continue;
-                                }
-                            }
-                            _ => {
-                                // unreachable!();
-                                continue;
-                            }
-                        };
+                    MediaData::VideoQueue => {
+                        let (next, refresh) = video_queue.write().unwrap().pop(std::time::Instant::now());
+                        if refresh { session.refresh_video(display as _); }
+                        let Some((vf, queue_ms)) = next else { continue; };
                         let display = vf.display as usize;
                         let start = std::time::Instant::now();
                         let format = CodecFormat::from(&vf);
@@ -2189,6 +2187,21 @@ pub fn start_video_thread<F, T>(
                                         pixelbuffer,
                                     );
 
+                                    timing_samples.push_back((start.elapsed().as_millis() as u32, queue_ms));
+                                    if timing_samples.len() > 120 { timing_samples.pop_front(); }
+                                    if timing_report.elapsed() >= std::time::Duration::from_secs(1) {
+                                        let mut decode: Vec<_> = timing_samples.iter().map(|s| s.0).collect();
+                                        let mut queued: Vec<_> = timing_samples.iter().map(|s| s.1).collect();
+                                        decode.sort_unstable();
+                                        queued.sort_unstable();
+                                        let idx = (decode.len() * 95 / 100).min(decode.len() - 1);
+                                        session.update_quality_status(QualityStatus {
+                                            decoder_timing: Some(serde_json::json!({
+                                                "display": display, "decode": decode[idx], "queue": queued[idx],
+                                            }).to_string()), ..Default::default()
+                                        });
+                                        timing_report = std::time::Instant::now();
+                                    }
                                     // chroma
                                     if tmp_chroma.is_some() && last_chroma != tmp_chroma {
                                         last_chroma = tmp_chroma;

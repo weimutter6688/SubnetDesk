@@ -205,10 +205,19 @@ impl<T: Subscriber + From<ConnInner>> ServiceTmpl<T> {
         self.send_shared(Arc::new(msg));
     }
 
-    pub fn send_to(&self, msg: Message, id: i32) {
+    pub fn send_to(&self, msg: Message, id: i32) -> bool {
         if let Some(s) = self.0.write().unwrap().subscribes.get_mut(&id) {
             s.send(Arc::new(msg));
+            true
+        } else {
+            false
         }
+    }
+
+    pub fn subscriber_ids(&self) -> Vec<i32> {
+        let mut lock = self.0.write().unwrap();
+        lock.swap_new_subscribes();
+        lock.subscribes.keys().copied().collect()
     }
 
     pub fn send_to_others(&self, msg: Message, id: i32) {

@@ -6,6 +6,7 @@ import {
   initialDecoderRecoveryState,
   initialVideoDecodeState,
   requestDecoderRecovery,
+  shouldRequestKeyFrame,
 } from "../src/video";
 
 describe("WebCodecs video queue", () => {
@@ -104,12 +105,15 @@ describe("WebCodecs video queue", () => {
 
   test("drops queued delta frames and resumes from a key frame", () => {
     const decoded: EncodedVideoChunkInit[] = [];
-    let resets = 0;
+    let configured = true;
     const decoder = {
       decodeQueueSize: 12,
-      decode: (chunk: EncodedVideoChunk) => decoded.push(chunk as unknown as EncodedVideoChunkInit),
+      decode: (chunk: EncodedVideoChunk) => {
+        if (!configured) throw new DOMException("Decoder is unconfigured", "InvalidStateError");
+        decoded.push(chunk as unknown as EncodedVideoChunkInit);
+      },
       reset: () => {
-        resets += 1;
+        configured = false;
       },
     };
     const createChunk = (init: EncodedVideoChunkInit) => init as unknown as EncodedVideoChunk;
@@ -141,9 +145,61 @@ describe("WebCodecs video queue", () => {
       createChunk,
     );
     expect(decoded.map(({ type }) => type)).toEqual(["key"]);
-    expect(resets).toBe(1);
+    expect(configured).toBe(true);
     expect(state.awaitingKeyFrame).toBe(false);
     expect(state.droppedFrames).toBe(2);
+  });
+
+  test("keeps backpressure active throughout a large recovery batch", () => {
+    let decoded = 0;
+    const decoder = {
+      decodeQueueSize: 0,
+      decode: () => {
+        decoded += 1;
+        decoder.decodeQueueSize += 1;
+      },
+    };
+    const state = decodeVideoBatch(
+      decoder,
+      VideoFrame.create({
+        vp9s: {
+          frames: Array.from({ length: 13 }, (_, index) => ({
+            key: index === 0,
+            pts: BigInt(index + 1),
+            data: new Uint8Array([index]),
+          })),
+        },
+      }),
+      { ...initialVideoDecodeState(), awaitingKeyFrame: true },
+      (init) => init as unknown as EncodedVideoChunk,
+    );
+    expect(decoded).toBe(6);
+    expect(state.awaitingKeyFrame).toBe(true);
+    expect(state.droppedFrames).toBe(7);
+  });
+
+  test("does not enqueue a recovery key frame while the decoder is still full", () => {
+    let decoded = 0;
+    const state = decodeVideoBatch(
+      { decodeQueueSize: 6, decode: () => { decoded += 1; } },
+      VideoFrame.create({
+        vp9s: { frames: [{ key: true, pts: 1n, data: new Uint8Array([1]) }] },
+      }),
+      { ...initialVideoDecodeState(), awaitingKeyFrame: true },
+      (init) => init as unknown as EncodedVideoChunk,
+    );
+    expect(decoded).toBe(0);
+    expect(state.awaitingKeyFrame).toBe(true);
+    expect(state.droppedFrames).toBe(1);
+  });
+
+  test("requests the first key frame immediately and throttles retries", () => {
+    expect(shouldRequestKeyFrame(undefined, 0)).toBe(true);
+    expect(shouldRequestKeyFrame(0, 0)).toBe(false);
+    expect(shouldRequestKeyFrame(0, 999)).toBe(false);
+    expect(shouldRequestKeyFrame(0, 1_000)).toBe(true);
+    expect(shouldRequestKeyFrame(1_000, 1_500)).toBe(false);
+    expect(shouldRequestKeyFrame(1_000, 2_000)).toBe(true);
   });
 
   test("uses the browser chunk constructor in the production decode path", () => {

@@ -7,6 +7,8 @@ use std::collections::HashMap;
 
 #[derive(Debug, Default)]
 pub struct QualityStatus {
+    pub server_timing: Option<String>,
+    pub decoder_timing: Option<String>,
     pub speed: Option<String>,
     pub fps: HashMap<usize, i32>,
     pub delay: Option<i32>,

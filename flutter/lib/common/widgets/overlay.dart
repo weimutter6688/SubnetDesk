@@ -588,7 +588,7 @@ class QualityMonitor extends StatelessWidget {
           builder: (context, qualityMonitorModel, child) => qualityMonitorModel
                   .show
               ? Container(
-                  constraints: BoxConstraints(maxWidth: 200),
+                  constraints: BoxConstraints(maxWidth: 280),
                   padding: const EdgeInsets.all(8),
                   color: MyTheme.canvasColor.withAlpha(150),
                   child: Column(
@@ -596,16 +596,23 @@ class QualityMonitor extends StatelessWidget {
                     children: [
                       _row("Speed", qualityMonitorModel.data.speed ?? '-'),
                       _row("FPS", qualityMonitorModel.data.fps ?? '-'),
-                      // let delay be 0 if fps is 0
                       _row(
                           "Delay",
-                          "${qualityMonitorModel.data.delay == null ? '-' : (qualityMonitorModel.data.fps ?? "").replaceAll(' ', '').replaceAll('0', '').isEmpty ? 0 : qualityMonitorModel.data.delay}ms",
+                          "${qualityMonitorModel.data.delay ?? '-'}ms",
                           rightColor: Colors.green),
                       _row("Target Bitrate",
                           "${qualityMonitorModel.data.targetBitrate ?? '-'}kb"),
                       _row(
                           "Codec", qualityMonitorModel.data.codecFormat ?? '-'),
                       _row("Chroma", qualityMonitorModel.data.chroma ?? '-'),
+                      _row(translate('Capture / encode'),
+                        "${qualityMonitorModel.data.serverTiming['capture'] ?? '-'} / ${qualityMonitorModel.data.serverTiming['encode'] ?? '-'} ms"),
+                      _row(translate('Send / ACK'), "${qualityMonitorModel.data.serverTiming['send'] ?? '-'} ms"),
+                      _row(translate('Decode / render p95'), "${qualityMonitorModel.data.decoderTiming['decode'] ?? '-'} ms"),
+                      _row(translate('Decode queue p95'), "${qualityMonitorModel.data.decoderTiming['queue'] ?? '-'} ms"),
+                      _row(translate('Stream resolution'),
+                        "${qualityMonitorModel.data.serverTiming['width'] ?? '-'} × ${qualityMonitorModel.data.serverTiming['height'] ?? '-'}"),
+                      _row(translate('Likely bottleneck'), translate(qualityMonitorModel.data.bottleneck)),
                     ],
                   ),
                 )

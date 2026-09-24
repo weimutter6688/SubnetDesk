@@ -26,6 +26,7 @@ import {
   initialDecoderRecoveryState,
   initialVideoDecodeState,
   requestDecoderRecovery,
+  shouldRequestKeyFrame,
   type DecoderRecoveryState,
   type VideoDecodeState,
 } from "./video";
@@ -100,6 +101,7 @@ let lastFrameRenderedAt = 0;
 let renderedFrames = 0;
 let displayedFps = 0;
 let videoAckPending = false;
+let lastKeyFrameRequestAt: number | undefined;
 let lastRemoteClipboard = "";
 let decoderRecoveryState: DecoderRecoveryState = initialDecoderRecoveryState();
 let firstDecoderError = "";
@@ -130,6 +132,7 @@ function resetConnection(message = t("disconnected")): void {
   displayedFps = 0;
   lastFrameRenderedAt = 0;
   videoAckPending = false;
+  lastKeyFrameRequestAt = undefined;
   lastRemoteClipboard = "";
   decoderRecoveryState = initialDecoderRecoveryState();
   firstDecoderError = "";
@@ -287,10 +290,15 @@ function queuePointerMove(event: PointerEvent): void {
   });
 }
 
-function sendVideoAck(): void {
+function sendVideoAck(requestKeyFrame = false): void {
   if (!authenticated) return;
   try {
     send(Message.create({ misc: { video_received: true } }));
+    const now = performance.now();
+    if (requestKeyFrame && shouldRequestKeyFrame(lastKeyFrameRequestAt, now)) {
+      send(Message.create({ misc: { refresh_video: true } }));
+      lastKeyFrameRequestAt = now;
+    }
   } catch {
     // A close event can race the decoder's final output callback.
   }
@@ -338,12 +346,13 @@ function configureVideoWorker(codec: SelectedVideoCodec, display: DisplayInfo): 
     videoWorker = new Worker(serverInfo.video_worker_url, { type: "module" });
     videoWorker.addEventListener("message", (event: MessageEvent<{
       type: "ack" | "stats" | "error";
+      requestKeyFrame?: boolean;
       fps?: number;
       droppedFrames?: number;
       message?: string;
     }>) => {
       if (event.data.type === "ack") {
-        sendVideoAck();
+        sendVideoAck(event.data.requestKeyFrame);
       } else if (event.data.type === "stats") {
         connectionStats.textContent =
           `${event.data.fps ?? 0} FPS · ${event.data.droppedFrames ?? 0} dropped · ${selectedCodec?.protocol.toUpperCase() ?? ""}`;
@@ -537,7 +546,7 @@ async function handleMessage(payload: Uint8Array, credentials: Credentials): Pro
         videoDecodeState.awaitingKeyFrame ||
         videoDecodeState.droppedFrames > previousDropped
       ) {
-        sendVideoAck();
+        sendVideoAck(videoDecodeState.awaitingKeyFrame);
       } else {
         videoAckPending = true;
       }

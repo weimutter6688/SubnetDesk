@@ -135,6 +135,12 @@ rules are preserved. Saving an empty list denies new native connections and stay
 empty after restart. Web access inherits this list unless its own allowlist is set.
 These are source-address rules, not automatic detection of a VPN tunnel.
 
+Video starts at 30 FPS with a conservative bitrate, adapts to congestion and decoder
+capacity, and gradually recovers up to the selected quality/FPS limits. Stable VPN
+RTT is distinguished from queueing delay. Known-device reconnects try a second
+address after 250 ms, with at most two concurrent attempts and fingerprint checks.
+This reduces avoidable delay; severely constrained or lossy links still limit quality.
+
 There is no GitHub update checker, downloader, installer, or online help link in
 the application. Distribute updates manually over LAN/VPN or offline media.
 Build dependencies and repository documentation may still reference GitHub.

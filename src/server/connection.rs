@@ -578,6 +578,7 @@ impl Connection {
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         std::thread::spawn(move || Self::handle_input(_rx_input, tx_cloned));
+        let mut pending_video: Option<(Instant, Option<usize>)> = None;
         let mut second_timer = crate::rustdesk_interval(time::interval(Duration::from_secs(1)));
 
         #[cfg(feature = "unix-file-copy-paste")]
@@ -730,7 +731,22 @@ impl Connection {
                         _ => {}
                     }
                 },
-                res = conn.stream.next() => {
+                event = conn.stream.next_or_flush(pending_video.is_some()) => {
+                    let res = match event {
+                        hbb_common::tcp::StreamEvent::Received(res) => res,
+                        hbb_common::tcp::StreamEvent::Flushed(result) => {
+                            if let Err(err) = result {
+                                conn.on_close(&err.to_string(), false).await;
+                                break;
+                            }
+                            if let Some((instant, Some(display))) = pending_video.take() {
+                                if !conn.video_ack_required {
+                                    video_service::notify_video_frame_fetched(display, id, Some(instant.into()));
+                                }
+                            }
+                            continue;
+                        }
+                    };
                     if let Some(res) = res {
                         match res {
                             Err(err) => {
@@ -759,10 +775,11 @@ impl Connection {
                         break;
                     }
                 },
-                _ = conn.file_timer.tick() => {
+                _ = conn.file_timer.tick(), if pending_video.is_none() => {
                     if !conn.read_jobs.is_empty() {
                         conn.send_to_cm(ipc::Data::FileTransferLog(("transfer".to_string(), fs::serialize_transfer_jobs(&conn.read_jobs))));
-                        match fs::handle_read_jobs(&mut conn.read_jobs, &mut conn.stream).await {
+                        let Some(limit) = crate::traffic::file_allowance(&format!("in:{}", conn.ip)) else { continue; };
+                        match fs::handle_read_jobs_with_limit(&mut conn.read_jobs, &mut conn.stream, limit).await {
                             Ok(log) => {
                                 if !log.is_empty() {
                                     conn.send_to_cm(ipc::Data::FileTransferLog(("transfer".to_string(), log)));
@@ -777,18 +794,17 @@ impl Connection {
                         conn.file_timer = crate::rustdesk_interval(time::interval_at(Instant::now() + SEC30, SEC30));
                     }
                 }
-                Some((instant, value)) = rx_video.recv() => {
-                    if !conn.video_ack_required {
-                        if let Some(message::Union::VideoFrame(vf)) = &value.union {
-                            video_service::notify_video_frame_fetched(vf.display as usize, id, Some(instant.into()));
-                        }
-                    }
-                    if let Err(err) = conn.stream.send(&value as &Message).await {
+                Some((instant, value)) = rx_video.recv(), if pending_video.is_none() => {
+                    if let Err(err) = conn.stream.queue_message(&value as &Message).await {
                         conn.on_close(&err.to_string(), false).await;
                         break;
                     }
+                    let display = if let Some(message::Union::VideoFrame(vf)) = &value.union {
+                        Some(vf.display as usize)
+                    } else { None };
+                    pending_video = Some((instant, display));
                 },
-                Some((instant, value)) = rx.recv() => {
+                Some((instant, value)) = rx.recv(), if pending_video.is_none() => {
                     let latency = instant.elapsed().as_millis() as i64;
                     #[allow(unused_mut)]
                     let mut msg = value;
@@ -850,6 +866,13 @@ impl Connection {
                     }
                 },
                 _ = second_timer.tick() => {
+                    if pending_video.as_ref().map_or(false, |(t, _)| t.elapsed().as_millis() >= SEND_TIMEOUT_VIDEO as u128) {
+                        conn.on_close("Video send timeout", true).await;
+                        break;
+                    }
+                    if conn.is_authed_remote_conn() {
+                        crate::traffic::video(&format!("in:{}", conn.ip), conn.network_delay);
+                    }
                     if conn.authorized
                         && conn.credential_revision_at_auth != 0
                         && conn.credential_revision_at_auth != Config::get_credential_revision()
@@ -878,17 +901,19 @@ impl Connection {
                         break;
                     }
                     // The control end will jump out of the loop after receiving LoginResponse and will not reply to the TestDelay
-                    if conn.last_test_delay.is_none() && !(conn.port_forward_socket.is_some() && conn.authorized) {
+                    if pending_video.is_none() && conn.last_test_delay.is_none() && !(conn.port_forward_socket.is_some() && conn.authorized) {
                         conn.last_test_delay = Some(Instant::now());
                         let mut msg_out = Message::new();
                         msg_out.set_test_delay(TestDelay{
                             last_delay: conn.network_delay,
-                            target_bitrate: video_service::VIDEO_QOS.lock().unwrap().bitrate(),
-                            ..Default::default()
+                            ..video_service::VIDEO_QOS.lock().unwrap().report(id)
                         });
                         conn.send(msg_out.into()).await;
                     }
                     if conn.is_authed_remote_conn() || conn.view_camera {
+                        if let Some((instant, _)) = pending_video.as_ref() {
+                            video_service::VIDEO_QOS.lock().unwrap().user_delay_response_elapsed(id, instant.elapsed().as_millis());
+                        }
                         if let Some(last_test_delay) = conn.last_test_delay {
                             video_service::VIDEO_QOS.lock().unwrap().user_delay_response_elapsed(id, last_test_delay.elapsed().as_millis());
                         }
@@ -2034,6 +2059,7 @@ impl Connection {
                     }
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
                     if self.peer_keyboard_enabled() {
+                        crate::traffic::input(&format!("in:{}", self.ip));
                         if is_left_up(&me) {
                             CLICK_TIME.store(get_time(), Ordering::SeqCst);
                         } else {
@@ -2097,6 +2123,7 @@ impl Connection {
                     }
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
                     if self.peer_keyboard_enabled() {
+                        crate::traffic::input(&format!("in:{}", self.ip));
                         MOUSE_MOVE_TIME.store(get_time(), Ordering::SeqCst);
                         self.input_pointer(pde, self.inner.id());
                     }
@@ -2165,6 +2192,7 @@ impl Connection {
                         return true;
                     }
                     if self.peer_keyboard_enabled() {
+                        crate::traffic::input(&format!("in:{}", self.ip));
                         if is_enter(&me) {
                             CLICK_TIME.store(get_time(), Ordering::SeqCst);
                         }
@@ -3273,7 +3301,7 @@ impl Connection {
         self.server.upgrade().map(|s| {
             s.read().unwrap().set_video_service_opt(
                 display.map(|d| (self.video_source(), d)),
-                video_service::OPTION_REFRESH,
+                &format!("refresh-{}", self.inner.id()),
                 super::service::SERVICE_OPTION_VALUE_TRUE,
             );
         });
@@ -3545,6 +3573,16 @@ impl Connection {
 
     async fn update_options(&mut self, o: &OptionMessage) {
         log::info!("Option update: {:?}", o);
+        if !o.connection_profile.is_empty() || o.adaptive_resolution != BoolOption::NotSet.into() {
+            video_service::VIDEO_QOS.lock().unwrap().peer(self.inner.id()).set_profile(
+                &o.connection_profile,
+                match o.adaptive_resolution.enum_value() {
+                    Ok(BoolOption::Yes) => Some(true),
+                    Ok(BoolOption::No) => Some(false),
+                    _ => None,
+                },
+            );
+        }
         if let Ok(q) = o.image_quality.enum_value() {
             let image_quality;
             if let ImageQuality::NotSet = q {

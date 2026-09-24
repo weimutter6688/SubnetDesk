@@ -201,7 +201,11 @@ fn listener_signature() -> (
     String,
 ) {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    let web_certificate_addresses = crate::web_gateway::certificate_address_signature();
+    let web_certificate_addresses = if crate::web_gateway::is_enabled() {
+        crate::web_gateway::certificate_address_signature()
+    } else {
+        Vec::new()
+    };
     #[cfg(any(target_os = "android", target_os = "ios"))]
     let web_certificate_addresses = Vec::new();
     (

@@ -18,7 +18,7 @@
 // to-do:
 // https://slhck.info/video/2017/03/01/rate-control.html
 
-use super::{display_service::check_display_changed, service::ServiceTmpl, video_qos::VideoQoS, *};
+use super::{display_service::check_display_changed, service::ServiceTmpl, video_qos::VideoQoSRegistry, *};
 #[cfg(target_os = "linux")]
 use crate::common::SimpleCallOnReturn;
 #[cfg(target_os = "linux")]
@@ -30,14 +30,7 @@ use crate::{
     privacy_mode::{is_current_privacy_mode_impl, PRIVACY_MODE_IMPL_WIN_MAG},
     ui_interface::is_installed,
 };
-use hbb_common::{
-    anyhow::anyhow,
-    config,
-    tokio::sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        Mutex as TokioMutex,
-    },
-};
+use hbb_common::{anyhow::anyhow, config};
 #[cfg(feature = "hwcodec")]
 use scrap::hwcodec::{HwRamEncoder, HwRamEncoderConfig};
 #[cfg(feature = "vram")]
@@ -62,19 +55,10 @@ use std::{
 
 pub const OPTION_REFRESH: &'static str = "refresh";
 
-type FrameFetchedNotifierSender = UnboundedSender<(i32, Option<Instant>)>;
-type FrameFetchedNotifierReceiver = Arc<TokioMutex<UnboundedReceiver<(i32, Option<Instant>)>>>;
-
 lazy_static::lazy_static! {
-    static ref FRAME_FETCHED_NOTIFIERS: Mutex<HashMap<usize, (FrameFetchedNotifierSender, FrameFetchedNotifierReceiver)>> = Mutex::new(HashMap::default());
+    static ref FRAME_PENDING: Mutex<HashMap<(i32, usize), Instant>> = Default::default();
 
-    // display_idx -> set of conn id.
-    // Used to record which connections need to be notified when
-    // 1. A new frame is received from a web client.
-    //   Because web client does not send the display index in message `VideoReceived`.
-    // 2. The client is closing.
-    static ref DISPLAY_CONN_IDS: Arc<Mutex<HashMap<usize, HashSet<i32>>>> = Default::default();
-    pub static ref VIDEO_QOS: Arc<Mutex<VideoQoS>> = Default::default();
+    pub static ref VIDEO_QOS: Arc<Mutex<VideoQoSRegistry>> = Default::default();
     pub static ref IS_UAC_RUNNING: Arc<Mutex<bool>> = Default::default();
     pub static ref IS_FOREGROUND_WINDOW_ELEVATED: Arc<Mutex<bool>> = Default::default();
     static ref SCREENSHOTS: Mutex<HashMap<(VideoSource, usize), Screenshot>> = Default::default();
@@ -88,108 +72,22 @@ struct Screenshot {
 
 #[inline]
 pub fn notify_video_frame_fetched(display_idx: usize, conn_id: i32, frame_tm: Option<Instant>) {
-    if let Some(notifier) = FRAME_FETCHED_NOTIFIERS.lock().unwrap().get(&display_idx) {
-        notifier.0.send((conn_id, frame_tm)).ok();
-    }
-}
-
-#[inline]
-pub fn notify_video_frame_fetched_by_conn_id(conn_id: i32, frame_tm: Option<Instant>) {
-    let vec_display_idx: Vec<usize> = {
-        let display_conn_ids = DISPLAY_CONN_IDS.lock().unwrap();
-        display_conn_ids
-            .iter()
-            .filter_map(|(display_idx, conn_ids)| {
-                if conn_ids.contains(&conn_id) {
-                    Some(*display_idx)
-                } else {
-                    None
-                }
-            })
-            .collect()
+    let sent = {
+        let mut pending = FRAME_PENDING.lock().unwrap();
+        let key = (conn_id, display_idx);
+        if pending.get(&key).map_or(false, |t| frame_tm.map_or(true, |ack| ack >= *t)) {
+            pending.remove(&key)
+        } else { None }
     };
-    let notifiers = FRAME_FETCHED_NOTIFIERS.lock().unwrap();
-    for display_idx in vec_display_idx {
-        if let Some(notifier) = notifiers.get(&display_idx) {
-            notifier.0.send((conn_id, frame_tm)).ok();
-        }
+    if let Some(sent) = sent {
+        VIDEO_QOS.lock().unwrap().peer(conn_id).send_ms = sent.elapsed().as_millis() as u32;
     }
 }
 
-struct VideoFrameController {
-    display_idx: usize,
-    cur: Instant,
-    send_conn_ids: HashSet<i32>,
-}
-
-impl VideoFrameController {
-    fn new(display_idx: usize) -> Self {
-        Self {
-            display_idx,
-            cur: Instant::now(),
-            send_conn_ids: HashSet::new(),
-        }
-    }
-
-    fn reset(&mut self) {
-        self.send_conn_ids.clear();
-    }
-
-    fn set_send(&mut self, tm: Instant, conn_ids: HashSet<i32>) {
-        if !conn_ids.is_empty() {
-            self.cur = tm;
-            self.send_conn_ids = conn_ids;
-            DISPLAY_CONN_IDS
-                .lock()
-                .unwrap()
-                .insert(self.display_idx, self.send_conn_ids.clone());
-        }
-    }
-
-    #[tokio::main(flavor = "current_thread")]
-    async fn try_wait_next(&mut self, fetched_conn_ids: &mut HashSet<i32>, timeout_millis: u64) {
-        if self.send_conn_ids.is_empty() {
-            return;
-        }
-
-        let timeout_dur = Duration::from_millis(timeout_millis as u64);
-        let receiver = {
-            match FRAME_FETCHED_NOTIFIERS
-                .lock()
-                .unwrap()
-                .get(&self.display_idx)
-            {
-                Some(notifier) => notifier.1.clone(),
-                None => {
-                    return;
-                }
-            }
-        };
-        let mut receiver_guard = receiver.lock().await;
-        match tokio::time::timeout(timeout_dur, receiver_guard.recv()).await {
-            Err(_) => {
-                // break if timeout
-                // log::error!("blocking wait frame receiving timeout {}", timeout_millis);
-            }
-            Ok(Some((id, instant))) => {
-                if let Some(tm) = instant {
-                    log::trace!("Channel recv latency: {}", tm.elapsed().as_secs_f32());
-                }
-                fetched_conn_ids.insert(id);
-            }
-            Ok(None) => {
-                // this branch would never be reached
-            }
-        }
-        while !receiver_guard.is_empty() {
-            if let Some((id, instant)) = receiver_guard.recv().await {
-                if let Some(tm) = instant {
-                    log::trace!("Channel recv latency: {}", tm.elapsed().as_secs_f32());
-                }
-                fetched_conn_ids.insert(id);
-            }
-        }
-    }
+pub fn notify_video_frame_fetched_by_conn_id(conn_id: i32, frame_tm: Option<Instant>) {
+    let displays: Vec<_> = FRAME_PENDING.lock().unwrap().keys()
+        .filter_map(|&(id, display)| (id == conn_id).then_some(display)).collect();
+    for display in displays { notify_video_frame_fetched(display, conn_id, frame_tm); }
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -241,14 +139,6 @@ pub fn get_service_name(source: VideoSource, idx: usize) -> String {
 }
 
 pub fn new(source: VideoSource, idx: usize) -> GenericService {
-    let _ = FRAME_FETCHED_NOTIFIERS
-        .lock()
-        .unwrap()
-        .entry(idx)
-        .or_insert_with(|| {
-            let (tx, rx) = unbounded_channel();
-            (tx, Arc::new(TokioMutex::new(rx)))
-        });
     let vs = VideoService {
         sp: GenericService::new(get_service_name(source, idx), true),
         idx,
@@ -533,8 +423,151 @@ fn get_capturer(
     }
 }
 
+struct ViewerEncoder {
+    encoder: Encoder,
+    config: EncoderCfg,
+    codec: CodecFormat,
+    use_i444: bool,
+    width: usize,
+    height: usize,
+    ratio: f32,
+    record: bool,
+    spf: Duration,
+    pending: Option<Instant>,
+    last_sent: Option<Instant>,
+    second: Instant,
+    count: usize,
+    failures: usize,
+    first_frame: bool,
+    repeat: usize,
+    yuv: Vec<u8>,
+    mid: Vec<u8>,
+    scaled: Vec<u8>,
+}
+
+impl ViewerEncoder {
+    fn ready(&self) -> bool {
+        self.pending.is_none() && self.last_sent.map_or(true, |t| t.elapsed() >= self.spf)
+    }
+    fn sent(&mut self) {
+        let now = Instant::now();
+        self.pending = Some(now);
+        self.last_sent = Some(now);
+        self.count += 1;
+    }
+}
+
+fn drain_frame_acks(display: usize, viewers: &mut HashMap<i32, ViewerEncoder>) {
+    let pending = FRAME_PENDING.lock().unwrap();
+    for (&id, viewer) in viewers.iter_mut() {
+        if !pending.contains_key(&(id, display)) {
+            viewer.pending = None;
+        }
+    }
+}
+
+fn stream_dimensions(width: usize, height: usize, mut divisor: u32) -> (usize, usize) {
+    while divisor > 1 && (width / (divisor as usize) < 640 || height / (divisor as usize) < 360) {
+        divisor /= 2;
+    }
+    if divisor <= 1 { (width, height) }
+    else { (width / divisor as usize / 2 * 2, height / divisor as usize / 2 * 2) }
+}
+
+fn prepare_viewers(
+    viewers: &mut HashMap<i32, ViewerEncoder>, sp: &GenericService, c: &CapturerInfo,
+    source: VideoSource, portable: bool, record_incoming: bool, texture_mode: &mut bool,
+) -> ResultType<()> {
+    let ids = sp.subscriber_ids();
+    viewers.retain(|id, _| ids.contains(id));
+    let name = sp.name();
+    let settings: Vec<_> = {
+        let mut registry = VIDEO_QOS.lock().unwrap();
+        ids.iter().map(|&id| {
+            let qos = registry.peer(id);
+            if !viewers.contains_key(&id) { qos.new_display(name.clone()); }
+            let divisor = if record_incoming { 1 } else { qos.resolution_divisor() };
+            (id, stream_dimensions(c.width, c.height, divisor), qos.ratio(), qos.spf(), qos.record())
+        }).collect()
+    };
+    let allow_texture = settings.iter().all(|s| s.1 == (c.width, c.height));
+    for (id, (width, height), ratio, spf, record) in settings {
+        // Do not append frames or reset an encoder while its previous frame is in flight.
+        if viewers.get(&id).map_or(false, |v| v.pending.is_some()) {
+            if let Some(v) = viewers.get_mut(&id) {
+                if v.second.elapsed() >= Duration::from_secs(1) {
+                    VIDEO_QOS.lock().unwrap().peer(id).update_display_data(&name, v.count);
+                    v.count = 0;
+                    v.second = Instant::now();
+                }
+            }
+            continue;
+        }
+        // A capture restart must not append another frame to a blocked socket.
+        if FRAME_PENDING.lock().unwrap().contains_key(&(id, c.current)) { continue; }
+        let refresh = format!("refresh-{id}");
+        let reset = viewers.get(&id).map_or(true, |v| {
+            v.width != width || v.height != height || v.codec != Encoder::negotiated_codec()
+                || v.use_i444 != Encoder::use_i444(&v.config) || v.record != record || sp.is_option_true(&refresh)
+                || (v.encoder.input_texture() && !allow_texture)
+                || (!v.encoder.support_changing_quality() && v.ratio != ratio)
+        });
+        if reset {
+            let cfg = get_encoder_config(c, name.clone(), ratio, record || record_incoming,
+                portable, source, width, height, allow_texture);
+            let use_i444 = Encoder::use_i444(&cfg);
+            Encoder::set_fallback(&cfg);
+            let encoder = match Encoder::new(cfg.clone(), use_i444) {
+                Ok(e) => e,
+                Err(e) => {
+                    log::error!("Viewer {id} encoder setup failed: {e}; falling back to VP9");
+                    Encoder::set_fallback(&EncoderCfg::VPX(VpxEncoderConfig {
+                        width: width as _, height: height as _, quality: ratio,
+                        codec: VpxVideoCodecId::VP9, keyframe_interval: None,
+                    }));
+                    bail!("SWITCH");
+                }
+            };
+            #[cfg(target_os = "android")]
+            if source.is_monitor() {
+                if let Err(e) = check_change_scale(encoder.is_hardware()) {
+                    try_broadcast_display_changed(sp, c.current, c, true)?;
+                    bail!(e);
+                }
+            }
+            // Keep same-format raw pixels for refreshing an otherwise static desktop.
+            let yuv = viewers.remove(&id).filter(|v| v.width == width && v.height == height
+                && v.encoder.yuvfmt().pixfmt == encoder.yuvfmt().pixfmt).map(|v| v.yuv).unwrap_or_default();
+            viewers.insert(id, ViewerEncoder {
+                encoder, config: cfg, codec: Encoder::negotiated_codec(), use_i444, width, height, ratio, record,
+                spf, pending: None, last_sent: None, second: Instant::now(), count: 0, failures: 0,
+                first_frame: true, repeat: 0, yuv, mid: Vec::new(), scaled: Vec::new(),
+            });
+            sp.set_option_bool(&refresh, false);
+        }
+        if let Some(v) = viewers.get_mut(&id) {
+            v.spf = spf;
+            if v.ratio != ratio && v.encoder.support_changing_quality() {
+                v.encoder.set_quality(ratio)?;
+                v.ratio = ratio;
+            }
+            let mut registry = VIDEO_QOS.lock().unwrap();
+            let qos = registry.peer(id);
+            qos.store_bitrate(v.encoder.bitrate());
+            qos.set_support_changing_quality(&name, v.encoder.support_changing_quality());
+            if v.second.elapsed() >= Duration::from_secs(1) {
+                qos.update_display_data(&name, v.count);
+                v.count = 0;
+                v.second = Instant::now();
+            }
+        }
+    }
+    *texture_mode = !viewers.is_empty() && viewers.values().all(|v| v.encoder.input_texture());
+    Ok(())
+}
+
 fn run(vs: VideoService) -> ResultType<()> {
-    let mut _raii = Raii::new(vs.idx, vs.sp.name());
+    let mut _raii = Raii::new(vs.sp.name());
     // Wayland only support one video capturer for now. It is ok to call ensure_inited() here.
     //
     // ensure_inited() is needed because clear() may be called.
@@ -572,68 +605,13 @@ fn run(vs: VideoService) -> ResultType<()> {
         log::info!("disable dxgi with option, fall back to gdi");
         c.set_gdi();
     }
-    let mut video_qos = VIDEO_QOS.lock().unwrap();
-    let mut spf = video_qos.spf();
-    let mut quality = video_qos.ratio();
     let record_incoming = config::option2bool(
-        "allow-auto-record-incoming",
-        &Config::get_option("allow-auto-record-incoming"),
-    );
-    let client_record = video_qos.record();
-    drop(video_qos);
-    let (mut encoder, encoder_cfg, codec_format, use_i444, recorder) = match setup_encoder(
-        &c,
-        sp.name(),
-        quality,
-        client_record,
-        record_incoming,
-        last_portable_service_running,
-        vs.source,
-        display_idx,
-    ) {
-        Ok(result) => result,
-        Err(err) => {
-            log::error!("Failed to create encoder: {err:?}, fallback to VP9");
-            Encoder::set_fallback(&EncoderCfg::VPX(VpxEncoderConfig {
-                width: c.width as _,
-                height: c.height as _,
-                quality,
-                codec: VpxVideoCodecId::VP9,
-                keyframe_interval: None,
-            }));
-            setup_encoder(
-                &c,
-                sp.name(),
-                quality,
-                client_record,
-                record_incoming,
-                last_portable_service_running,
-                vs.source,
-                display_idx,
-            )?
-        }
-    };
-    #[cfg(feature = "vram")]
-    c.set_output_texture(encoder.input_texture());
-    #[cfg(target_os = "android")]
-    if vs.source.is_monitor() {
-        if let Err(e) = check_change_scale(encoder.is_hardware()) {
-            try_broadcast_display_changed(&sp, display_idx, &c, true).ok();
-            bail!(e);
-        }
-    }
-    VIDEO_QOS.lock().unwrap().store_bitrate(encoder.bitrate());
-    VIDEO_QOS
-        .lock()
-        .unwrap()
-        .set_support_changing_quality(&sp.name(), encoder.support_changing_quality());
-    log::info!("initial quality: {quality:?}");
-
-    if sp.is_option_true(OPTION_REFRESH) {
-        sp.set_option_bool(OPTION_REFRESH, false);
-    }
-
-    let mut frame_controller = VideoFrameController::new(display_idx);
+        "allow-auto-record-incoming", &Config::get_option("allow-auto-record-incoming"));
+    let mut recorder: Arc<Mutex<Option<Recorder>>> = Default::default();
+    let mut record_owner = None;
+    let mut viewers: HashMap<i32, ViewerEncoder> = HashMap::new();
+    let mut texture_mode = false;
+    sp.set_option_bool(OPTION_REFRESH, false);
 
     let start = time::Instant::now();
     let mut last_check_displays = time::Instant::now();
@@ -646,28 +624,22 @@ fn run(vs: VideoService) -> ResultType<()> {
 
     #[cfg(target_os = "linux")]
     let mut would_block_count = 0u32;
-    let mut yuv = Vec::new();
-    let mut mid_data = Vec::new();
-    let mut repeat_encode_counter = 0;
-    let repeat_encode_max = 10;
-    let mut encode_fail_counter = 0;
-    let mut first_frame = true;
-    let capture_width = c.width;
-    let capture_height = c.height;
-    let (mut second_instant, mut send_counter) = (Instant::now(), 0);
+    let mut last_frame = Instant::now();
 
     while sp.ok() {
         #[cfg(windows)]
         check_uac_switch(c.privacy_mode_id, c._capturer_privacy_mode_id)?;
-        check_qos(
-            &mut encoder,
-            &mut quality,
-            &mut spf,
-            client_record,
-            &mut send_counter,
-            &mut second_instant,
-            &sp.name(),
-        )?;
+        drain_frame_acks(display_idx, &mut viewers);
+        prepare_viewers(&mut viewers, &sp, &c, vs.source, last_portable_service_running,
+            record_incoming, &mut texture_mode)?;
+        let next_owner = viewers.keys().copied().min();
+        if record_incoming && record_owner != next_owner {
+            recorder = get_recorder(true, display_idx, vs.source == VideoSource::Camera);
+            record_owner = next_owner;
+        }
+        #[cfg(feature = "vram")]
+        c.set_output_texture(texture_mode);
+        let spf = viewers.values().map(|v| v.spf).min().unwrap_or(Duration::from_millis(33));
         if sp.is_option_true(OPTION_REFRESH) {
             if vs.source.is_monitor() {
                 let _ = try_broadcast_display_changed(&sp, display_idx, &c, true);
@@ -675,26 +647,13 @@ fn run(vs: VideoService) -> ResultType<()> {
             log::info!("switch to refresh");
             bail!("SWITCH");
         }
-        if codec_format != Encoder::negotiated_codec() {
-            log::info!(
-                "switch due to codec changed, {:?} -> {:?}",
-                codec_format,
-                Encoder::negotiated_codec()
-            );
-            bail!("SWITCH");
-        }
         #[cfg(windows)]
         if last_portable_service_running != crate::portable_service::client::running() {
             log::info!("switch due to portable service running changed");
             bail!("SWITCH");
         }
-        if Encoder::use_i444(&encoder_cfg) != use_i444 {
-            log::info!("switch due to i444 changed");
-            bail!("SWITCH");
-        }
         #[cfg(all(windows, feature = "vram"))]
-        if c.is_gdi() && encoder.input_texture() {
-            log::info!("changed to gdi when using vram");
+        if c.is_gdi() && texture_mode {
             VRamEncoder::set_fallback_gdi(sp.name(), true);
             bail!("SWITCH");
         }
@@ -717,13 +676,18 @@ fn run(vs: VideoService) -> ResultType<()> {
             try_broadcast_display_changed(&sp, display_idx, &c, false)?;
         }
 
-        frame_controller.reset();
+        if !viewers.values().any(ViewerEncoder::ready) {
+            std::thread::sleep(Duration::from_millis(5));
+            continue;
+        }
 
         let time = now - start;
         let ms = (time.as_secs() * 1000 + time.subsec_millis() as u64) as i64;
+        let capture_begin = Instant::now();
         let res = match c.frame(spf) {
             Ok(frame) => {
-                repeat_encode_counter = 0;
+                let capture_ms = capture_begin.elapsed().as_millis() as u32;
+                last_frame = Instant::now();
                 if frame.valid() {
                     let screenshot_key = (vs.source, display_idx);
                     let screenshot = SCREENSHOTS.lock().unwrap().remove(&screenshot_key);
@@ -772,21 +736,32 @@ fn run(vs: VideoService) -> ResultType<()> {
                         }
                     }
 
-                    let frame = frame.to(encoder.yuvfmt(), &mut yuv, &mut mid_data)?;
-                    let send_conn_ids = handle_one_frame(
-                        display_idx,
-                        &sp,
-                        frame,
-                        ms,
-                        &mut encoder,
-                        recorder.clone(),
-                        &mut encode_fail_counter,
-                        &mut first_frame,
-                        capture_width,
-                        capture_height,
-                    )?;
-                    frame_controller.set_send(now, send_conn_ids);
-                    send_counter += 1;
+                    for (&id, viewer) in viewers.iter_mut() {
+                        if !viewer.ready() { continue; }
+                        viewer.repeat = 0;
+                        let encode_begin = Instant::now();
+                        let input = match &frame {
+                            scrap::Frame::PixelBuffer(pixels) => {
+                                scrap::scaled_to_yuv(pixels, viewer.width, viewer.height,
+                                    viewer.encoder.yuvfmt(), &mut viewer.yuv, &mut viewer.mid,
+                                    &mut viewer.scaled)?;
+                                EncodeInput::YUV(&viewer.yuv)
+                            }
+                            scrap::Frame::Texture(texture) => EncodeInput::Texture(*texture),
+                        };
+                        let sent = handle_one_frame(display_idx, &sp, id, input, ms,
+                            &mut viewer.encoder, if record_owner == Some(id) { recorder.clone() } else { Default::default() },
+                            &mut viewer.failures, &mut viewer.first_frame, viewer.width, viewer.height)?;
+                        let mut registry = VIDEO_QOS.lock().unwrap();
+                        let qos = registry.peer(id);
+                        qos.capture_ms = capture_ms;
+                        qos.encode_ms = encode_begin.elapsed().as_millis() as u32;
+                        qos.stream_size = (viewer.width as u32, viewer.height as u32);
+                        drop(registry);
+                        if !sent.is_empty() {
+                            viewer.sent();
+                        }
+                    }
                 }
                 #[cfg(windows)]
                 {
@@ -803,6 +778,12 @@ fn run(vs: VideoService) -> ResultType<()> {
 
         match res {
             Err(ref e) if e.kind() == WouldBlock => {
+                if last_frame.elapsed() > Duration::from_secs(1)
+                    && viewers.values().any(|v| v.first_frame && v.yuv.is_empty()) {
+                    // Ask the capture backend for its initial image on a static desktop.
+                    // This happens only on a new stream with no cached pixels.
+                    bail!("SWITCH");
+                }
                 #[cfg(windows)]
                 if try_gdi > 0 && !c.is_gdi() {
                     if try_gdi > 3 {
@@ -828,24 +809,14 @@ fn run(vs: VideoService) -> ResultType<()> {
                         }
                     }
                 }
-                if !encoder.latency_free() && yuv.len() > 0 {
-                    // yun.len() > 0 means the frame is not texture.
-                    if repeat_encode_counter < repeat_encode_max {
-                        repeat_encode_counter += 1;
-                        let send_conn_ids = handle_one_frame(
-                            display_idx,
-                            &sp,
-                            EncodeInput::YUV(&yuv),
-                            ms,
-                            &mut encoder,
-                            recorder.clone(),
-                            &mut encode_fail_counter,
-                            &mut first_frame,
-                            capture_width,
-                            capture_height,
-                        )?;
-                        frame_controller.set_send(now, send_conn_ids);
-                        send_counter += 1;
+                for (&id, viewer) in viewers.iter_mut() {
+                    if viewer.ready() && (viewer.first_frame || !viewer.encoder.latency_free()) && !viewer.yuv.is_empty()
+                        && viewer.repeat < 10 {
+                        viewer.repeat += 1;
+                        let sent = handle_one_frame(display_idx, &sp, id, EncodeInput::YUV(&viewer.yuv), ms,
+                            &mut viewer.encoder, if record_owner == Some(id) { recorder.clone() } else { Default::default() }, &mut viewer.failures,
+                            &mut viewer.first_frame, viewer.width, viewer.height)?;
+                        if !sent.is_empty() { viewer.sent(); }
                     }
                 }
             }
@@ -872,21 +843,6 @@ fn run(vs: VideoService) -> ResultType<()> {
             }
         }
 
-        let mut fetched_conn_ids = HashSet::new();
-        let timeout_millis = 3_000u64;
-        let wait_begin = Instant::now();
-        while wait_begin.elapsed().as_millis() < timeout_millis as _ {
-            if vs.source.is_monitor() {
-                check_privacy_mode_changed(&sp, display_idx, &c)?;
-            }
-            frame_controller.try_wait_next(&mut fetched_conn_ids, 300);
-            // break if all connections have received current frame
-            if fetched_conn_ids.len() >= frame_controller.send_conn_ids.len() {
-                break;
-            }
-        }
-        DISPLAY_CONN_IDS.lock().unwrap().remove(&display_idx);
-
         let elapsed = now.elapsed();
         // may need to enable frame(timeout)
         log::trace!("{:?} {:?}", time::Instant::now(), elapsed);
@@ -899,17 +855,14 @@ fn run(vs: VideoService) -> ResultType<()> {
 }
 
 struct Raii {
-    display_idx: usize,
     name: String,
     try_vram: bool,
 }
 
 impl Raii {
-    fn new(display_idx: usize, name: String) -> Self {
+    fn new(name: String) -> Self {
         log::info!("new video service: {}", name);
-        VIDEO_QOS.lock().unwrap().new_display(name.clone());
         Raii {
-            display_idx,
             name,
             try_vram: true,
         }
@@ -926,40 +879,7 @@ impl Drop for Raii {
         #[cfg(feature = "vram")]
         Encoder::update(scrap::codec::EncodingUpdate::Check);
         VIDEO_QOS.lock().unwrap().remove_display(&self.name);
-        DISPLAY_CONN_IDS.lock().unwrap().remove(&self.display_idx);
     }
-}
-
-fn setup_encoder(
-    c: &CapturerInfo,
-    name: String,
-    quality: f32,
-    client_record: bool,
-    record_incoming: bool,
-    last_portable_service_running: bool,
-    source: VideoSource,
-    display_idx: usize,
-) -> ResultType<(
-    Encoder,
-    EncoderCfg,
-    CodecFormat,
-    bool,
-    Arc<Mutex<Option<Recorder>>>,
-)> {
-    let encoder_cfg = get_encoder_config(
-        &c,
-        name.to_string(),
-        quality,
-        client_record || record_incoming,
-        last_portable_service_running,
-        source,
-    );
-    Encoder::set_fallback(&encoder_cfg);
-    let codec_format = Encoder::negotiated_codec();
-    let recorder = get_recorder(record_incoming, display_idx, source == VideoSource::Camera);
-    let use_i444 = Encoder::use_i444(&encoder_cfg);
-    let encoder = Encoder::new(encoder_cfg.clone(), use_i444)?;
-    Ok((encoder, encoder_cfg, codec_format, use_i444, recorder))
 }
 
 fn get_encoder_config(
@@ -969,6 +889,9 @@ fn get_encoder_config(
     record: bool,
     _portable_service: bool,
     _source: VideoSource,
+    width: usize,
+    height: usize,
+    allow_texture: bool,
 ) -> EncoderCfg {
     #[cfg(all(windows, feature = "vram"))]
     if _portable_service || c.is_gdi() || _source == VideoSource::Camera {
@@ -983,11 +906,11 @@ fn get_encoder_config(
     match negotiated_codec {
         CodecFormat::H264 | CodecFormat::H265 => {
             #[cfg(feature = "vram")]
-            if let Some(feature) = VRamEncoder::try_get(&c.device(), negotiated_codec) {
+            if let Some(feature) = if allow_texture { VRamEncoder::try_get(&c.device(), negotiated_codec) } else { None } {
                 return EncoderCfg::VRAM(VRamEncoderConfig {
                     device: c.device(),
-                    width: c.width,
-                    height: c.height,
+                    width: width,
+                    height: height,
                     quality,
                     feature,
                     keyframe_interval,
@@ -998,23 +921,23 @@ fn get_encoder_config(
                 return EncoderCfg::HWRAM(HwRamEncoderConfig {
                     name: hw.name,
                     mc_name: hw.mc_name,
-                    width: c.width,
-                    height: c.height,
+                    width: width,
+                    height: height,
                     quality,
                     keyframe_interval,
                 });
             }
             EncoderCfg::VPX(VpxEncoderConfig {
-                width: c.width as _,
-                height: c.height as _,
+                width: width as _,
+                height: height as _,
                 quality,
                 codec: VpxVideoCodecId::VP9,
                 keyframe_interval,
             })
         }
         format @ (CodecFormat::VP8 | CodecFormat::VP9) => EncoderCfg::VPX(VpxEncoderConfig {
-            width: c.width as _,
-            height: c.height as _,
+            width: width as _,
+            height: height as _,
             quality,
             codec: if format == CodecFormat::VP8 {
                 VpxVideoCodecId::VP8
@@ -1024,14 +947,14 @@ fn get_encoder_config(
             keyframe_interval,
         }),
         CodecFormat::AV1 => EncoderCfg::AOM(AomEncoderConfig {
-            width: c.width as _,
-            height: c.height as _,
+            width: width as _,
+            height: height as _,
             quality,
             keyframe_interval,
         }),
         _ => EncoderCfg::VPX(VpxEncoderConfig {
-            width: c.width as _,
-            height: c.height as _,
+            width: width as _,
+            height: height as _,
             quality,
             codec: VpxVideoCodecId::VP9,
             keyframe_interval,
@@ -1128,6 +1051,7 @@ fn check_privacy_mode_changed(
 fn handle_one_frame(
     display: usize,
     sp: &GenericService,
+    id: i32,
     frame: EncodeInput,
     ms: i64,
     encoder: &mut Encoder,
@@ -1137,15 +1061,6 @@ fn handle_one_frame(
     width: usize,
     height: usize,
 ) -> ResultType<HashSet<i32>> {
-    sp.snapshot(|sps| {
-        // so that new sub and old sub share the same encoder after switch
-        if sps.has_subscribes() {
-            log::info!("switch due to new subscriber");
-            bail!("SWITCH");
-        }
-        Ok(())
-    })?;
-
     let mut send_conn_ids: HashSet<i32> = Default::default();
     let first = *first_frame;
     *first_frame = false;
@@ -1160,7 +1075,12 @@ fn handle_one_frame(
                 .unwrap()
                 .as_mut()
                 .map(|r| r.write_message(&msg, width, height));
-            send_conn_ids = sp.send_video_frame(msg);
+            FRAME_PENDING.lock().unwrap().insert((id, display), Instant::now());
+            if sp.send_to(msg, id) {
+                send_conn_ids.insert(id);
+            } else {
+                FRAME_PENDING.lock().unwrap().remove(&(id, display));
+            }
         }
         Err(e) => {
             *encode_fail_counter += 1;
@@ -1306,43 +1226,6 @@ pub fn make_display_changed_msg(
     Some(msg_out)
 }
 
-fn check_qos(
-    encoder: &mut Encoder,
-    ratio: &mut f32,
-    spf: &mut Duration,
-    client_record: bool,
-    send_counter: &mut usize,
-    second_instant: &mut Instant,
-    name: &str,
-) -> ResultType<()> {
-    let mut video_qos = VIDEO_QOS.lock().unwrap();
-    *spf = video_qos.spf();
-    if *ratio != video_qos.ratio() {
-        *ratio = video_qos.ratio();
-        if encoder.support_changing_quality() {
-            allow_err!(encoder.set_quality(*ratio));
-            video_qos.store_bitrate(encoder.bitrate());
-        } else {
-            // Now only vaapi doesn't support changing quality
-            if !video_qos.in_vbr_state() && !video_qos.latest_quality().is_custom() {
-                log::info!("switch to change quality");
-                bail!("SWITCH");
-            }
-        }
-    }
-    if client_record != video_qos.record() {
-        log::info!("switch due to record changed");
-        bail!("SWITCH");
-    }
-    if second_instant.elapsed() > Duration::from_secs(1) {
-        *second_instant = Instant::now();
-        video_qos.update_display_data(&name, *send_counter);
-        *send_counter = 0;
-    }
-    drop(video_qos);
-    Ok(())
-}
-
 pub fn set_take_screenshot(source: VideoSource, display_idx: usize, sid: String, tx: Sender) {
     SCREENSHOTS.lock().unwrap().insert(
         (source, display_idx),
@@ -1414,5 +1297,65 @@ fn handle_screenshot(screenshot: Screenshot, msg: String, w: usize, h: usize, da
         .send((hbb_common::tokio::time::Instant::now(), Arc::new(msg_out)))
     {
         log::error!("Failed to send screenshot, {}", e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_notifications_are_bounded_and_scoped_to_viewer_and_display() {
+        let display = usize::MAX;
+        let before = Instant::now();
+        let started = before + Duration::from_millis(1);
+        FRAME_PENDING.lock().unwrap().insert((-1, display), started);
+        FRAME_PENDING.lock().unwrap().insert((-2, display), started);
+        notify_video_frame_fetched(display, -1, Some(before));
+        assert!(FRAME_PENDING.lock().unwrap().contains_key(&(-1, display)));
+        for _ in 0..100 { notify_video_frame_fetched(display, -1, None); }
+        assert!(!FRAME_PENDING.lock().unwrap().contains_key(&(-1, display)));
+        assert!(FRAME_PENDING.lock().unwrap().remove(&(-2, display)).is_some());
+        VIDEO_QOS.lock().unwrap().on_connection_close(-1);
+    }
+
+    #[test]
+    fn adaptive_size_preserves_native_space_and_minimum_readability() {
+        assert_eq!(stream_dimensions(1920, 1080, 1), (1920, 1080));
+        assert_eq!(stream_dimensions(1920, 1080, 4), (960, 540));
+        assert_eq!(stream_dimensions(3840, 2160, 4), (960, 540));
+        assert_eq!(stream_dimensions(800, 600, 4), (800, 600));
+    }
+
+    #[test]
+    fn scaled_vp9_stream_decodes_at_transmitted_size_with_padded_capture_stride() {
+        use scrap::{GoogleImage, Pixfmt, vpxcodec::{VpxDecoder, VpxDecoderConfig}};
+        struct Pixels(Vec<u8>);
+        impl TraitPixelBuffer for Pixels {
+            fn data(&self) -> &[u8] { &self.0 }
+            fn width(&self) -> usize { 1280 }
+            fn height(&self) -> usize { 720 }
+            fn stride(&self) -> Vec<usize> { vec![1280 * 4 + 64] }
+            fn pixfmt(&self) -> Pixfmt { Pixfmt::BGRA }
+        }
+        let mut pixels = Pixels(vec![0; (1280 * 4 + 64) * 720]);
+        for y in 0..720 { for x in 0..1280 {
+            let i = y * (1280 * 4 + 64) + x * 4;
+            pixels.0[i..i+4].copy_from_slice(&[(x % 256) as u8, (y % 256) as u8, 80, 255]);
+        }}
+        let mut encoder = Encoder::new(EncoderCfg::VPX(VpxEncoderConfig {
+            width: 640, height: 360, quality: 0.5, codec: VpxVideoCodecId::VP9,
+            keyframe_interval: None,
+        }), false).unwrap();
+        let (mut yuv, mut mid, mut scaled) = (vec![], vec![], vec![]);
+        scrap::scaled_to_yuv(&pixels, 640, 360, encoder.yuvfmt(), &mut yuv, &mut mid, &mut scaled).unwrap();
+        let frame = encoder.encode_to_message(EncodeInput::YUV(&yuv), 0).unwrap();
+        let video_frame::Union::Vp9s(frames) = frame.union.unwrap() else { panic!("Expected VP9"); };
+        assert!(frames.frames[0].key);
+        let mut decoder = VpxDecoder::new(VpxDecoderConfig { codec: VpxVideoCodecId::VP9 }).unwrap();
+        let decoded = decoder.decode(&frames.frames[0].data).unwrap().next().unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (640, 360));
+        pixels.0.truncate(10);
+        assert!(scrap::scaled_to_yuv(&pixels, 640, 360, encoder.yuvfmt(), &mut yuv, &mut mid, &mut scaled).is_err());
     }
 }

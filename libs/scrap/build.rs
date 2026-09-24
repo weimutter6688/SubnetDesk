@@ -170,9 +170,9 @@ fn gen_vcpkg_package(package: &str, ffi_header: &str, generated: &str, regex: &s
     let out_dir = Path::new(&out_dir);
 
     let ffi_header = src_dir.join("src").join("bindings").join(ffi_header);
-    println!("rerun-if-changed={}", ffi_header.display());
+    println!("cargo:rerun-if-changed={}", ffi_header.display());
     for dir in &includes {
-        println!("rerun-if-changed={}", dir.display());
+        println!("cargo:rerun-if-changed={}", dir.display());
     }
 
     let ffi_rs = out_dir.join(generated);

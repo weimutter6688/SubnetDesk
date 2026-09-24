@@ -4,3 +4,4 @@
 #include <libyuv/convert_from_argb.h>
 #include <libyuv/rotate.h>
 #include <libyuv/rotate_argb.h>
+#include <libyuv/scale_argb.h>

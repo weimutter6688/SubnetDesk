@@ -1536,6 +1536,7 @@ class _DisplayMenuState extends State<_DisplayMenu> {
         _screenAdjustor.adjustWindow(context),
         viewStyle(customPercent: _customPercent),
         scrollStyle(state, colorScheme),
+        connectionProfile(),
         imageQuality(),
         codec(),
         if (ffi.connType == ConnType.defaultConn)
@@ -1739,6 +1740,15 @@ class _DisplayMenuState extends State<_DisplayMenu> {
             ],
             Divider(),
           ]));
+    });
+  }
+
+  connectionProfile() {
+    return futureBuilder(future: toolbarConnectionProfile(ffi), hasData: (data) {
+      final menus = data as List<TRadioMenu<String>>;
+      return _SubmenuButton(ffi: ffi, child: Text(translate('Connection mode')),
+        menuChildren: menus.map((e) => RdoMenuButton<String>(value: e.value,
+          groupValue: e.groupValue, onChanged: e.onChanged, child: e.child, ffi: ffi)).toList());
     });
   }
 

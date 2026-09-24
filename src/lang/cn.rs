@@ -1,6 +1,21 @@
 lazy_static::lazy_static! {
 pub static ref T: std::collections::HashMap<&'static str, &'static str> =
     [
+        ("Normal", "正常"),
+        ("Capture", "采集"),
+        ("Encoding", "编码"),
+        ("Decoding", "解码"),
+        ("Idle", "画面静止"),
+        ("Likely bottleneck", "可能的瓶颈"),
+        ("Stream resolution", "传输分辨率"),
+        ("Decode queue p95", "解码排队 p95"),
+        ("Decode / render p95", "解码 / 渲染 p95"),
+        ("Send / ACK", "发送 / 确认"),
+        ("Capture / encode", "采集 / 编码"),
+        ("Image quality (native resolution)", "画质优先（原始分辨率）"),
+        ("Readable text (native resolution)", "文字清晰（原始分辨率）"),
+        ("Low latency (adaptive resolution)", "低延迟（自适应分辨率）"),
+        ("Connection mode", "连接模式"),
         ("Export diagnostic bundle", "导出诊断包"),
         ("Diagnostic bundle description", "导出最近 7 天的日志和版本信息，用于提交问题反馈。会尝试隐藏常见敏感信息，请在公开上传前检查诊断包内容。"),
         ("Status", "状态"),

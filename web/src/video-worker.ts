@@ -29,6 +29,7 @@ type WorkerInput = InitializeMessage | FrameMessage | ResetMessage;
 
 interface WorkerOutput {
   type: "ack" | "stats" | "error";
+  requestKeyFrame?: boolean;
   fps?: number;
   droppedFrames?: number;
   message?: string;
@@ -109,7 +110,7 @@ function decode(frame: ProtocolVideoFrame): void {
   const previousDropped = decodeState.droppedFrames;
   decodeState = decodeVideoBatch(decoder, frame, decodeState);
   if (decodeState.awaitingKeyFrame || decodeState.droppedFrames > previousDropped) {
-    post({ type: "ack" });
+    post({ type: "ack", requestKeyFrame: decodeState.awaitingKeyFrame });
   } else {
     pendingAcks += 1;
   }

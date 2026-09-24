@@ -13,9 +13,48 @@ use hbb_common::{bail, log, ResultType};
 
 generate_call_macro!(call_yuv, false);
 
+/// Scale in pixel space before conversion. Buffers are reused by each encoder.
+#[cfg(not(target_os = "ios"))]
+pub fn scaled_to_yuv(
+    captured: &dyn TraitPixelBuffer,
+    width: usize,
+    height: usize,
+    fmt: EncodeYuvFormat,
+    dst: &mut Vec<u8>,
+    mid: &mut Vec<u8>,
+    scaled: &mut Vec<u8>,
+) -> ResultType<()> {
+    let sw = captured.width();
+    let sh = captured.height();
+    let stride = captured.stride().first().copied().unwrap_or(0);
+    let pixfmt = captured.pixfmt();
+    if width == sw && height == sh { return convert_to_yuv(captured, fmt, dst, mid); }
+    if !matches!(pixfmt, crate::Pixfmt::BGRA | crate::Pixfmt::RGBA) {
+        bail!("Adaptive scaling requires BGRA/RGBA capture");
+    }
+    if sw == 0 || sh == 0 || width == 0 || height == 0
+        || width > sw || height > sh || sw > 32768 || sh > 32768
+        || stride < sw * 4 || stride > i32::MAX as usize
+        || captured.data().len() < stride.saturating_mul(sh) {
+        bail!("Invalid scaling dimensions or capture stride");
+    }
+    scaled.resize(width * height * 4, 0);
+    call_yuv!(ARGBScale(captured.data().as_ptr(), stride as _, sw as _, sh as _,
+        scaled.as_mut_ptr(), (width * 4) as _, width as _, height as _, FilterMode::kFilterBilinear));
+    struct Pixels<'a> { bytes: &'a [u8], w: usize, h: usize, fmt: crate::Pixfmt }
+    impl TraitPixelBuffer for Pixels<'_> {
+        fn data(&self) -> &[u8] { self.bytes }
+        fn width(&self) -> usize { self.w }
+        fn height(&self) -> usize { self.h }
+        fn stride(&self) -> Vec<usize> { vec![self.w * 4] }
+        fn pixfmt(&self) -> crate::Pixfmt { self.fmt }
+    }
+    convert_to_yuv(&Pixels { bytes: scaled, w: width, h: height, fmt: pixfmt }, fmt, dst, mid)
+}
+
 #[cfg(not(target_os = "ios"))]
 pub fn convert_to_yuv(
-    captured: &PixelBuffer,
+    captured: &dyn TraitPixelBuffer,
     dst_fmt: EncodeYuvFormat,
     dst: &mut Vec<u8>,
     mid_data: &mut Vec<u8>,

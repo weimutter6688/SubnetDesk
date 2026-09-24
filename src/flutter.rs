@@ -518,16 +518,15 @@ impl VideoRenderer {
         }
 
         if info.size.0 != rgba.w || info.size.1 != rgba.h {
-            log::error!(
-                "width/height mismatch: ({},{}) != ({},{})",
-                info.size.0,
-                info.size.1,
-                rgba.w,
-                rgba.h
-            );
             // Peer info's handling is async and may be late than video frame's handling
             // Allow peer info not set, but not allow wrong width/height for correct local cursor position
-            if info.size != (0, 0) {
+            // Texture rendering stretches the transmitted image over the native
+            // display rectangle. Keep cursor coordinates in that native space.
+            let scaled = rgba.w > 0 && rgba.h > 0
+                && rgba.w <= info.size.0 && rgba.h <= info.size.1
+                && (rgba.w as i64 * info.size.1 as i64 - rgba.h as i64 * info.size.0 as i64).abs()
+                    <= 2 * (info.size.0 as i64 + info.size.1 as i64);
+            if info.size != (0, 0) && !scaled {
                 return false;
             }
         }
@@ -773,6 +772,8 @@ impl InvokeUiSession for FlutterHandler {
             "update_quality_status",
             &[
                 ("speed", &status.speed.map_or(NULL, |it| it)),
+                ("server_timing", &status.server_timing.unwrap_or_default()),
+                ("decoder_timing", &status.decoder_timing.unwrap_or_default()),
                 (
                     "fps",
                     &serde_json::ser::to_string(&status.fps).unwrap_or(NULL.to_owned()),

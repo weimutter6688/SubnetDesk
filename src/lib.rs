@@ -12,6 +12,7 @@ mod server;
 #[cfg(not(any(target_os = "ios")))]
 pub use self::server::*;
 mod client;
+mod traffic;
 /// cbindgen:ignore
 pub mod common;
 #[cfg(not(any(target_os = "ios")))]

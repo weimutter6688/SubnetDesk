@@ -700,6 +700,20 @@ Future<List<TRadioMenu<String>>> toolbarViewStyle(
   ];
 }
 
+Future<List<TRadioMenu<String>>> toolbarConnectionProfile(FFI ffi) async {
+  final saved = await bind.sessionGetPeerOption(sessionId: ffi.sessionId, name: 'connection-profile');
+  final selected = saved.isEmpty ? 'latency' : saved;
+  return {'latency': 'Low latency (adaptive resolution)',
+    'text': 'Readable text (native resolution)',
+    'quality': 'Image quality (native resolution)'}.entries.map((entry) => TRadioMenu<String>(
+      child: Text(translate(entry.value)), value: entry.key, groupValue: selected,
+      onChanged: (value) {
+        if (value != null) bind.sessionPeerOption(sessionId: ffi.sessionId,
+          name: 'connection-profile', value: value);
+      },
+    )).toList();
+}
+
 Future<List<TRadioMenu<String>>> toolbarImageQuality(
   BuildContext context,
   String id,
