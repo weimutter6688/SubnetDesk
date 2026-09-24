@@ -97,9 +97,11 @@ Download stable packages from **[GitHub Releases](https://github.com/zibo-chen/S
 ## 🚀 Quick start
 
 1. Install and open SubnetDesk on both devices.
-2. On the controlled device, open **LAN settings**, set a username and password, and enable LAN discovery. The default port is `21118`.
+2. A controlled device with no previously configured access account initializes username `subnetrust` and password `subnet@local`, listening on port `21118` by default. Change credentials and LAN discovery options in **LAN settings**.
 3. On the controller, select a discovered device or enter `hostname:port` / `IP:port` manually.
 4. Verify the device fingerprint on first connection, then connect.
+
+The default credentials are shared by all copies; replace the password in LAN settings. Existing credentials are preserved, and restarting does not restore defaults after credentials are changed or explicitly cleared. These credentials are independent of the operating system login.
 
 <p align="center">
   <img src="assets/screenshots/lan-settings.png" alt="SubnetDesk LAN settings" width="880">
