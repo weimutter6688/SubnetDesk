@@ -55,6 +55,9 @@ use std::{
 
 pub const OPTION_REFRESH: &'static str = "refresh";
 
+mod frame_cache;
+use frame_cache::{CachedFrame, FrameCache};
+
 lazy_static::lazy_static! {
     static ref FRAME_PENDING: Mutex<HashMap<(i32, usize), Instant>> = Default::default();
 
@@ -440,6 +443,7 @@ struct ViewerEncoder {
     failures: usize,
     first_frame: bool,
     repeat: usize,
+    frame_generation: u64,
     yuv: Vec<u8>,
     mid: Vec<u8>,
     scaled: Vec<u8>,
@@ -455,6 +459,45 @@ impl ViewerEncoder {
         self.last_sent = Some(now);
         self.count += 1;
     }
+}
+
+fn send_cached_frames(
+    display: usize, sp: &GenericService, viewers: &mut HashMap<i32, ViewerEncoder>,
+    cache: &FrameCache, ms: i64, recorder: &Arc<Mutex<Option<Recorder>>>,
+    record_owner: Option<i32>, capture_ms: u32,
+) -> ResultType<()> {
+    let Some(frame) = &cache.frame else { return Ok(()); };
+    for (&id, viewer) in viewers.iter_mut() {
+        let new_frame = viewer.frame_generation != cache.generation;
+        if !viewer.ready() || !(new_frame || viewer.first_frame
+            || (!viewer.encoder.latency_free() && viewer.repeat < 10)) { continue; }
+        let encode_begin = Instant::now();
+        let input = match frame {
+            CachedFrame::Pixels(pixels) => {
+                if new_frame || viewer.yuv.is_empty() {
+                    scrap::scaled_to_yuv(pixels, viewer.width, viewer.height,
+                        viewer.encoder.yuvfmt(), &mut viewer.yuv, &mut viewer.mid,
+                        &mut viewer.scaled)?;
+                }
+                EncodeInput::YUV(&viewer.yuv)
+            }
+            #[cfg(windows)]
+            CachedFrame::Texture(texture, rotation) => EncodeInput::Texture((texture.as_ptr(), *rotation)),
+        };
+        viewer.repeat = if new_frame { 0 } else { viewer.repeat + 1 };
+        viewer.frame_generation = cache.generation;
+        let sent = handle_one_frame(display, sp, id, input, ms,
+            &mut viewer.encoder, if record_owner == Some(id) { recorder.clone() } else { Default::default() },
+            &mut viewer.failures, &mut viewer.first_frame, viewer.width, viewer.height)?;
+        let mut registry = VIDEO_QOS.lock().unwrap();
+        let qos = registry.peer(id);
+        qos.capture_ms = capture_ms;
+        qos.encode_ms = encode_begin.elapsed().as_millis() as u32;
+        qos.stream_size = (viewer.width as u32, viewer.height as u32);
+        drop(registry);
+        if !sent.is_empty() { viewer.sent(); }
+    }
+    Ok(())
 }
 
 fn drain_frame_acks(display: usize, viewers: &mut HashMap<i32, ViewerEncoder>) {
@@ -535,13 +578,10 @@ fn prepare_viewers(
                     bail!(e);
                 }
             }
-            // Keep same-format raw pixels for refreshing an otherwise static desktop.
-            let yuv = viewers.remove(&id).filter(|v| v.width == width && v.height == height
-                && v.encoder.yuvfmt().pixfmt == encoder.yuvfmt().pixfmt).map(|v| v.yuv).unwrap_or_default();
             viewers.insert(id, ViewerEncoder {
                 encoder, config: cfg, codec: Encoder::negotiated_codec(), use_i444, width, height, ratio, record,
                 spf, pending: None, last_sent: None, second: Instant::now(), count: 0, failures: 0,
-                first_frame: true, repeat: 0, yuv, mid: Vec::new(), scaled: Vec::new(),
+                first_frame: true, repeat: 0, frame_generation: 0, yuv: Vec::new(), mid: Vec::new(), scaled: Vec::new(),
             });
             sp.set_option_bool(&refresh, false);
         }
@@ -610,6 +650,8 @@ fn run(vs: VideoService) -> ResultType<()> {
     let mut recorder: Arc<Mutex<Option<Recorder>>> = Default::default();
     let mut record_owner = None;
     let mut viewers: HashMap<i32, ViewerEncoder> = HashMap::new();
+    let mut latest_frame = FrameCache::default();
+    let mut capture_ms = 0;
     let mut texture_mode = false;
     sp.set_option_bool(OPTION_REFRESH, false);
 
@@ -686,7 +728,7 @@ fn run(vs: VideoService) -> ResultType<()> {
         let capture_begin = Instant::now();
         let res = match c.frame(spf) {
             Ok(frame) => {
-                let capture_ms = capture_begin.elapsed().as_millis() as u32;
+                capture_ms = capture_begin.elapsed().as_millis() as u32;
                 last_frame = Instant::now();
                 if frame.valid() {
                     let screenshot_key = (vs.source, display_idx);
@@ -736,32 +778,9 @@ fn run(vs: VideoService) -> ResultType<()> {
                         }
                     }
 
-                    for (&id, viewer) in viewers.iter_mut() {
-                        if !viewer.ready() { continue; }
-                        viewer.repeat = 0;
-                        let encode_begin = Instant::now();
-                        let input = match &frame {
-                            scrap::Frame::PixelBuffer(pixels) => {
-                                scrap::scaled_to_yuv(pixels, viewer.width, viewer.height,
-                                    viewer.encoder.yuvfmt(), &mut viewer.yuv, &mut viewer.mid,
-                                    &mut viewer.scaled)?;
-                                EncodeInput::YUV(&viewer.yuv)
-                            }
-                            scrap::Frame::Texture(texture) => EncodeInput::Texture(*texture),
-                        };
-                        let sent = handle_one_frame(display_idx, &sp, id, input, ms,
-                            &mut viewer.encoder, if record_owner == Some(id) { recorder.clone() } else { Default::default() },
-                            &mut viewer.failures, &mut viewer.first_frame, viewer.width, viewer.height)?;
-                        let mut registry = VIDEO_QOS.lock().unwrap();
-                        let qos = registry.peer(id);
-                        qos.capture_ms = capture_ms;
-                        qos.encode_ms = encode_begin.elapsed().as_millis() as u32;
-                        qos.stream_size = (viewer.width as u32, viewer.height as u32);
-                        drop(registry);
-                        if !sent.is_empty() {
-                            viewer.sent();
-                        }
-                    }
+                    latest_frame.update(&frame)?;
+                    send_cached_frames(display_idx, &sp, &mut viewers, &latest_frame, ms,
+                        &recorder, record_owner, capture_ms)?;
                 }
                 #[cfg(windows)]
                 {
@@ -779,7 +798,8 @@ fn run(vs: VideoService) -> ResultType<()> {
         match res {
             Err(ref e) if e.kind() == WouldBlock => {
                 if last_frame.elapsed() > Duration::from_secs(1)
-                    && viewers.values().any(|v| v.first_frame && v.yuv.is_empty()) {
+                    && latest_frame.frame.is_none()
+                    && viewers.values().any(|v| v.first_frame) {
                     // Ask the capture backend for its initial image on a static desktop.
                     // This happens only on a new stream with no cached pixels.
                     bail!("SWITCH");
@@ -809,16 +829,8 @@ fn run(vs: VideoService) -> ResultType<()> {
                         }
                     }
                 }
-                for (&id, viewer) in viewers.iter_mut() {
-                    if viewer.ready() && (viewer.first_frame || !viewer.encoder.latency_free()) && !viewer.yuv.is_empty()
-                        && viewer.repeat < 10 {
-                        viewer.repeat += 1;
-                        let sent = handle_one_frame(display_idx, &sp, id, EncodeInput::YUV(&viewer.yuv), ms,
-                            &mut viewer.encoder, if record_owner == Some(id) { recorder.clone() } else { Default::default() }, &mut viewer.failures,
-                            &mut viewer.first_frame, viewer.width, viewer.height)?;
-                        if !sent.is_empty() { viewer.sent(); }
-                    }
-                }
+                send_cached_frames(display_idx, &sp, &mut viewers, &latest_frame, ms,
+                    &recorder, record_owner, capture_ms)?;
             }
             Err(err) => {
                 // This check may be redundant, but it is better to be safe.
@@ -1303,6 +1315,79 @@ fn handle_screenshot(screenshot: Screenshot, msg: String, w: usize, h: usize, da
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slow_viewer_catches_up_without_another_capture() {
+        struct Pixels(Vec<u8>);
+        impl TraitPixelBuffer for Pixels {
+            fn data(&self) -> &[u8] { &self.0 }
+            fn width(&self) -> usize { 64 }
+            fn height(&self) -> usize { 64 }
+            fn stride(&self) -> Vec<usize> { vec![256] }
+            fn pixfmt(&self) -> scrap::Pixfmt { scrap::Pixfmt::BGRA }
+        }
+        fn viewer() -> ViewerEncoder {
+            let config = EncoderCfg::VPX(VpxEncoderConfig {
+                width: 64, height: 64, quality: 0.5,
+                codec: VpxVideoCodecId::VP9, keyframe_interval: None,
+            });
+            ViewerEncoder {
+                encoder: Encoder::new(config.clone(), false).unwrap(), config,
+                codec: CodecFormat::VP9, use_i444: false, width: 64, height: 64,
+                ratio: 0.5, record: false, spf: Duration::ZERO,
+                pending: None, last_sent: None, second: Instant::now(), count: 0,
+                failures: 0, first_frame: true, repeat: 0, frame_generation: 0,
+                yuv: vec![], mid: vec![], scaled: vec![],
+            }
+        }
+        let display = usize::MAX - 1;
+        let sp = GenericService::new("cache-test".into(), false);
+        let (fast_tx, mut fast_rx) = hbb_common::tokio::sync::mpsc::unbounded_channel();
+        let (slow_tx, mut slow_rx) = hbb_common::tokio::sync::mpsc::unbounded_channel();
+        sp.on_subscribe(ConnInner::new(-101, None, Some(fast_tx)));
+        sp.on_subscribe(ConnInner::new(-102, None, Some(slow_tx)));
+        let mut viewers = HashMap::from([(-101, viewer()), (-102, viewer())]);
+        let recorder = Default::default();
+        let mut cache = FrameCache::default();
+        let mut pixels = Pixels(vec![0; 64 * 64 * 4]);
+        cache.update_pixels(&pixels);
+        send_cached_frames(display, &sp, &mut viewers, &cache, 0, &recorder, None, 0).unwrap();
+        fast_rx.try_recv().unwrap();
+        slow_rx.try_recv().unwrap();
+        // Only the fast viewer acknowledges the initial image. Subsequent
+        // captures replace the shared cache while the slow viewer stays blocked.
+        for value in [80, 160] {
+            notify_video_frame_fetched(display, -101, None);
+            drain_frame_acks(display, &mut viewers);
+            pixels.0.fill(value);
+            cache.update_pixels(&pixels);
+            send_cached_frames(display, &sp, &mut viewers, &cache, value as _, &recorder, None, 0).unwrap();
+            fast_rx.try_recv().unwrap();
+            assert!(slow_rx.try_recv().is_err());
+        }
+        pixels.0.fill(0); // The cache must own its pixels.
+        let CachedFrame::Pixels(saved) = cache.frame.as_ref().unwrap() else { panic!("pixels"); };
+        assert_eq!(saved.data()[0], 160);
+        // The desktop is now idle: acknowledge without providing another frame.
+        notify_video_frame_fetched(display, -101, None);
+        notify_video_frame_fetched(display, -102, None);
+        drain_frame_acks(display, &mut viewers);
+        send_cached_frames(display, &sp, &mut viewers, &cache, 200, &recorder, None, 0).unwrap();
+        assert!(fast_rx.try_recv().is_err());
+        let (_, msg) = slow_rx.try_recv().unwrap();
+        assert!(matches!(&msg.union, Some(message::Union::VideoFrame(_))));
+        assert_eq!(viewers[&-102].frame_generation, cache.generation);
+        assert_eq!(viewers[&-102].count, 2);
+        // An encoder rebuilt for refresh also gets the cached image immediately.
+        notify_video_frame_fetched(display, -102, None);
+        viewers.insert(-102, viewer());
+        send_cached_frames(display, &sp, &mut viewers, &cache, 250, &recorder, None, 0).unwrap();
+        slow_rx.try_recv().unwrap();
+        for id in [-101, -102] {
+            notify_video_frame_fetched(display, id, None);
+            VIDEO_QOS.lock().unwrap().on_connection_close(id);
+        }
+    }
 
     #[test]
     fn frame_notifications_are_bounded_and_scoped_to_viewer_and_display() {

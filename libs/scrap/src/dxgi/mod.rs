@@ -41,6 +41,55 @@ impl<T> Drop for ComPtr<T> {
     }
 }
 
+/// An owned GPU copy that remains valid after desktop duplication releases a frame.
+pub struct CachedTexture {
+    texture: ComPtr<ID3D11Texture2D>,
+    context: ComPtr<ID3D11DeviceContext>,
+}
+
+impl CachedTexture {
+    /// # Safety
+    /// `source` must be a live ID3D11Texture2D from the capture device. Updates
+    /// must use that same device and texture description on the capture thread.
+    pub unsafe fn new(source: *mut c_void) -> io::Result<Self> {
+        if source.is_null() {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let source = source as *mut ID3D11Texture2D;
+        let mut device = ptr::null_mut();
+        (*source).GetDevice(&mut device);
+        let device = ComPtr(device);
+        if device.is_null() {
+            return Err(io::ErrorKind::NotFound.into());
+        }
+        let mut desc: D3D11_TEXTURE2D_DESC = mem::zeroed();
+        (*source).GetDesc(&mut desc);
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.CPUAccessFlags = 0;
+        desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+        let mut texture = ptr::null_mut();
+        wrap_hresult((*device.0).CreateTexture2D(&desc, ptr::null(), &mut texture))?;
+        let texture = ComPtr(texture);
+        let mut context = ptr::null_mut();
+        (*device.0).GetImmediateContext(&mut context);
+        let context = ComPtr(context);
+        if texture.is_null() || context.is_null() {
+            return Err(io::ErrorKind::NotFound.into());
+        }
+        Ok(Self { texture, context })
+    }
+
+    /// # Safety
+    /// `source` must satisfy the device, description and lifetime requirements of `new`.
+    pub unsafe fn copy_from(&mut self, source: *mut c_void) {
+        (*self.context.0).CopyResource(self.texture.0 as *mut _, source as *mut _);
+    }
+
+    pub fn as_ptr(&self) -> *mut c_void {
+        self.texture.0 as *mut _
+    }
+}
+
 pub struct Capturer {
     device: ComPtr<ID3D11Device>,
     display: Display,
