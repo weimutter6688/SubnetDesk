@@ -83,6 +83,7 @@ pub mod io_loop;
 mod lan_connect;
 pub mod screenshot;
 mod video_queue;
+mod voice_call;
 
 pub const MILLI1: Duration = Duration::from_millis(1);
 pub const SEC30: Duration = Duration::from_secs(30);

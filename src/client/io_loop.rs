@@ -60,7 +60,7 @@ pub struct Remote<T: InvokeUiSession> {
     receiver: mpsc::UnboundedReceiver<Data>,
     sender: mpsc::UnboundedSender<Data>,
     // Stop sending local audio to remote client.
-    stop_voice_call_sender: Option<tokio::sync::oneshot::Sender<()>>,
+    voice_call_task: Option<super::voice_call::VoiceCallTask>,
     voice_call_request_timestamp: Option<NonZeroI64>,
     read_jobs: Vec<fs::TransferJob>,
     write_jobs: Vec<fs::TransferJob>,
@@ -120,7 +120,7 @@ impl<T: InvokeUiSession> Remote<T> {
             client_conn_id: 0,
             data_count: Arc::new(AtomicUsize::new(0)),
             video_format: CodecFormat::Unknown,
-            stop_voice_call_sender: None,
+            voice_call_task: None,
             voice_call_request_timestamp: None,
             elevation_requested: false,
             peer_info: Default::default(),
@@ -338,9 +338,7 @@ impl<T: InvokeUiSession> Remote<T> {
                 }
                 log::debug!("Exit io_loop of id={}", self.handler.get_id());
                 // Stop client audio server.
-                if let Some(s) = self.stop_voice_call_sender.take() {
-                    s.send(()).ok();
-                }
+                self.stop_voice_call().await;
             }
             Err(err) => {
                 self.handler.on_establish_connection_error(err.to_string());
@@ -451,15 +449,14 @@ impl<T: InvokeUiSession> Remote<T> {
         }
     }
 
-    fn stop_voice_call(&mut self) {
-        let voice_call_sender = std::mem::replace(&mut self.stop_voice_call_sender, None);
-        if let Some(stopper) = voice_call_sender {
-            let _ = stopper.send(());
+    async fn stop_voice_call(&mut self) {
+        if let Some(task) = self.voice_call_task.take() {
+            task.stop().await;
         }
     }
 
     // Start a voice call recorder, records audio and send to remote
-    fn start_voice_call(&mut self) -> Option<tokio::sync::oneshot::Sender<()>> {
+    fn start_voice_call(&mut self) -> Option<super::voice_call::VoiceCallTask> {
         if self.handler.is_file_transfer()
             || self.handler.is_port_forward()
             || self.handler.is_terminal()
@@ -475,8 +472,6 @@ impl<T: InvokeUiSession> Remote<T> {
             // But it' not necessary for now, because it's not a common case.
             // And it is immediately known when the input device is changed.
             crate::audio_service::set_voice_call_input_device(get_default_sound_input(), false);
-            // Create a channel to receive error or closed message
-            let (tx, mut rx) = tokio::sync::oneshot::channel();
             let (tx_audio_data, mut rx_audio_data) =
                 hbb_common::tokio::sync::mpsc::unbounded_channel();
             // Create a stand-alone inner, add subscribe to audio service
@@ -489,7 +484,7 @@ impl<T: InvokeUiSession> Remote<T> {
                 true,
             );
             let tx_audio = self.sender.clone();
-            tokio::spawn(async move {
+            let task = super::voice_call::VoiceCallTask::spawn(|mut rx| async move {
                 loop {
                     let data = tokio::select! {
                         biased;
@@ -509,15 +504,16 @@ impl<T: InvokeUiSession> Remote<T> {
                         }
                     }
                 }
+            }, move || {
                 log::debug!("Exit voice call audio service of client");
                 CLIENT_SERVER.write().unwrap().subscribe(
                     audio_service::NAME,
-                    client_conn_inner,
+                    client_conn_inner.clone(),
                     false,
                 );
                 crate::audio_service::set_voice_call_input_device(None, true);
             });
-            return Some(tx);
+            return Some(task);
         }
         #[cfg(target_os = "ios")]
         {
@@ -961,7 +957,7 @@ impl<T: InvokeUiSession> Remote<T> {
                 self.handler.on_voice_call_waiting();
             }
             Data::CloseVoiceCall => {
-                self.stop_voice_call();
+                self.stop_voice_call().await;
                 let msg = new_voice_call_request(false);
                 self.handler
                     .on_voice_call_closed("Closed manually by the peer");
@@ -1874,8 +1870,8 @@ impl<T: InvokeUiSession> Remote<T> {
                         // TODO: maybe we will do a voice call from the peer in the future.
                     } else {
                         log::debug!("The remote has requested to close the voice call");
-                        if let Some(sender) = self.stop_voice_call_sender.take() {
-                            allow_err!(sender.send(()));
+                        if self.voice_call_task.is_some() {
+                            self.stop_voice_call().await;
                             self.handler.on_voice_call_closed("");
                         }
                     }
@@ -1889,7 +1885,8 @@ impl<T: InvokeUiSession> Remote<T> {
                             if response.accepted {
                                 // The peer accepted the voice call.
                                 self.handler.on_voice_call_started();
-                                self.stop_voice_call_sender = self.start_voice_call();
+                                self.stop_voice_call().await;
+                                self.voice_call_task = self.start_voice_call();
                             } else {
                                 // The peer refused the voice call.
                                 self.handler.on_voice_call_closed("");
