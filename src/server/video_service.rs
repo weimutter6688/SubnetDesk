@@ -450,6 +450,13 @@ struct ViewerEncoder {
 }
 
 impl ViewerEncoder {
+    fn input_texture(&self) -> bool {
+        #[cfg(feature = "vram")]
+        { self.encoder.input_texture() }
+        #[cfg(not(feature = "vram"))]
+        { false }
+    }
+
     fn ready(&self) -> bool {
         self.pending.is_none() && self.last_sent.map_or(true, |t| t.elapsed() >= self.spf)
     }
@@ -552,7 +559,7 @@ fn prepare_viewers(
         let reset = viewers.get(&id).map_or(true, |v| {
             v.width != width || v.height != height || v.codec != Encoder::negotiated_codec()
                 || v.use_i444 != Encoder::use_i444(&v.config) || v.record != record || sp.is_option_true(&refresh)
-                || (v.encoder.input_texture() && !allow_texture)
+                || (v.input_texture() && !allow_texture)
                 || (!v.encoder.support_changing_quality() && v.ratio != ratio)
         });
         if reset {
@@ -602,7 +609,7 @@ fn prepare_viewers(
             }
         }
     }
-    *texture_mode = !viewers.is_empty() && viewers.values().all(|v| v.encoder.input_texture());
+    *texture_mode = !viewers.is_empty() && viewers.values().all(ViewerEncoder::input_texture);
     Ok(())
 }
 
