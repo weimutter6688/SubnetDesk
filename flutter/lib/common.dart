@@ -1338,24 +1338,25 @@ void msgBox(
       ),
     );
   }
-  if (reconnect != null &&
-      title == "Connection Error" &&
-      reconnectTimeout != null) {
+  if (reconnect != null && title == "Connection Error") {
     // `enabled` is used to disable the dialog button once the button is clicked.
     final enabled = true.obs;
-    final button = Obx(
-      () => _CountDownButton(
-        text: 'Reconnect',
-        second: reconnectTimeout,
-        onPressed: enabled.isTrue
-            ? () {
-                // Disable the button
-                enabled.value = false;
-                reconnect(dialogManager, sessionId, false);
-              }
-            : null,
-      ),
-    );
+    final button = Obx(() {
+      final onPressed = enabled.isTrue
+          ? () {
+              // Disable the button
+              enabled.value = false;
+              reconnect(dialogManager, sessionId, true);
+            }
+          : null;
+      return reconnectTimeout == null
+          ? dialogButton('Reconnect', onPressed: onPressed)
+          : _CountDownButton(
+              text: 'Reconnect',
+              second: reconnectTimeout,
+              onPressed: onPressed,
+            );
+    });
     buttons.insert(0, button);
   }
   if (link.isNotEmpty) {
