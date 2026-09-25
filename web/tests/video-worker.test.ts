@@ -56,7 +56,13 @@ test("video worker requests a key frame after overload and acknowledges recovere
     expect(decoder.state).toBe("configured");
     expect(messages).toHaveLength(2);
     decoder.callbacks.output({ close() {} } as VideoFrame);
-    expect(messages.at(-1)).toEqual({ type: "ack" });
+    expect(messages.at(-1)).toEqual({ type: "ack", requestKeyFrame: false });
+    deliver(false, 4n);
+    decoder.decodeQueueSize = 6;
+    deliver(false, 5n);
+    // Output from before the overload must not cancel key-frame recovery.
+    decoder.callbacks.output({ close() {} } as VideoFrame);
+    expect(messages.at(-1)).toEqual({ type: "ack", requestKeyFrame: true });
     expect(messages.some((message) => message.type === "error")).toBe(false);
   } finally {
     scope.onmessage?.({ data: { type: "reset" } });

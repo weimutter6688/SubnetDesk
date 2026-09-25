@@ -26,7 +26,7 @@ import {
   initialDecoderRecoveryState,
   initialVideoDecodeState,
   requestDecoderRecovery,
-  shouldRequestKeyFrame,
+  KeyFrameRecovery,
   type DecoderRecoveryState,
   type VideoDecodeState,
 } from "./video";
@@ -101,7 +101,14 @@ let lastFrameRenderedAt = 0;
 let renderedFrames = 0;
 let displayedFps = 0;
 let videoAckPending = false;
-let lastKeyFrameRequestAt: number | undefined;
+const keyFrameRecovery = new KeyFrameRecovery(() => {
+  if (!authenticated) return;
+  try {
+    send(Message.create({ misc: { refresh_video: true } }));
+  } catch {
+    // A connection close can race the recovery timer.
+  }
+});
 let lastRemoteClipboard = "";
 let decoderRecoveryState: DecoderRecoveryState = initialDecoderRecoveryState();
 let firstDecoderError = "";
@@ -132,7 +139,7 @@ function resetConnection(message = t("disconnected")): void {
   displayedFps = 0;
   lastFrameRenderedAt = 0;
   videoAckPending = false;
-  lastKeyFrameRequestAt = undefined;
+  keyFrameRecovery.reset();
   lastRemoteClipboard = "";
   decoderRecoveryState = initialDecoderRecoveryState();
   firstDecoderError = "";
@@ -294,11 +301,7 @@ function sendVideoAck(requestKeyFrame = false): void {
   if (!authenticated) return;
   try {
     send(Message.create({ misc: { video_received: true } }));
-    const now = performance.now();
-    if (requestKeyFrame && shouldRequestKeyFrame(lastKeyFrameRequestAt, now)) {
-      send(Message.create({ misc: { refresh_video: true } }));
-      lastKeyFrameRequestAt = now;
-    }
+    keyFrameRecovery.setAwaitingKeyFrame(requestKeyFrame);
   } catch {
     // A close event can race the decoder's final output callback.
   }
@@ -323,8 +326,7 @@ function recoverDecoder(message: string, mode: "worker" | "main"): void {
   viewerStatus.textContent = `${t("decoderRecovering")}: ${detailed}`;
   try {
     configureDecoder(peerInfo, true);
-    send(Message.create({ misc: { refresh_video: true } }));
-    sendVideoAck();
+    sendVideoAck(true);
   } catch (error) {
     const recoveryError = error instanceof Error ? error.message : t("unknownError");
     closeConnection(`${t("decoderFailed")}: ${firstDecoderError}; recovery: ${recoveryError}`);
@@ -388,6 +390,7 @@ function videoFrameTransferables(frame: NonNullable<Message["video_frame"]>): Tr
 }
 
 function configureDecoder(peer: PeerInfo, recovering = false): void {
+  keyFrameRecovery.reset();
   if (!selectedCodec) throw new Error(t("noCodec"));
   const codec = selectedCodec;
   peerInfo = peer;
@@ -427,7 +430,7 @@ function configureDecoder(peer: PeerInfo, recovering = false): void {
       }
       if (videoAckPending && authenticated) {
         videoAckPending = false;
-        sendVideoAck();
+        sendVideoAck(videoDecodeState.awaitingKeyFrame);
       }
     },
     error: (error) => recoverDecoder(error.message, "main"),

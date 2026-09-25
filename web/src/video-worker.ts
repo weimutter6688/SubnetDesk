@@ -88,7 +88,7 @@ function initialize(message: InitializeMessage): void {
       }
       if (pendingAcks > 0) {
         pendingAcks -= 1;
-        post({ type: "ack" });
+        post({ type: "ack", requestKeyFrame: decodeState.awaitingKeyFrame });
       }
     },
     error: (error) => post({ type: "error", message: error.message }),

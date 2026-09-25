@@ -32,6 +32,54 @@ export function shouldRequestKeyFrame(lastRequestedAt: number | undefined, now: 
   return lastRequestedAt === undefined || now - lastRequestedAt >= KEY_FRAME_REQUEST_INTERVAL_MS;
 }
 
+type ScheduleRetry = (callback: () => void, delayMs: number) => () => void;
+
+// Keep retrying even when the desktop is idle and no more frames arrive.
+export class KeyFrameRecovery {
+  private cancelRetry?: () => void;
+  private lastRequestedAt?: number;
+  private waiting = false;
+
+  constructor(
+    private readonly request: () => void,
+    private readonly schedule: ScheduleRetry = (callback, delayMs) => {
+      const timer = setTimeout(callback, delayMs);
+      return () => clearTimeout(timer);
+    },
+    private readonly now: () => number = () => performance.now(),
+  ) {}
+
+  setAwaitingKeyFrame(waiting: boolean): void {
+    this.waiting = waiting;
+    if (!waiting) {
+      this.cancelRetry?.();
+      this.cancelRetry = undefined;
+    } else {
+      this.retry();
+    }
+  }
+
+  reset(): void {
+    this.setAwaitingKeyFrame(false);
+    this.lastRequestedAt = undefined;
+  }
+
+  private retry(): void {
+    if (!this.waiting || this.cancelRetry) return;
+    const now = this.now();
+    if (shouldRequestKeyFrame(this.lastRequestedAt, now)) {
+      this.lastRequestedAt = now;
+      this.request();
+    }
+    if (!this.waiting) return;
+    const delay = Math.max(0, KEY_FRAME_REQUEST_INTERVAL_MS - (now - (this.lastRequestedAt ?? now)));
+    this.cancelRetry = this.schedule(() => {
+      this.cancelRetry = undefined;
+      this.retry();
+    }, delay);
+  }
+}
+
 export function initialDecoderRecoveryState(maxAttempts = 1): DecoderRecoveryState {
   return { attempts: 0, maxAttempts };
 }
