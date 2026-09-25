@@ -38,7 +38,7 @@ impl PeerTraffic {
 lazy_static::lazy_static! {
     static ref PEERS: Mutex<HashMap<String, PeerTraffic>> = Default::default();
 }
-pub fn video(peer: &str, delay: u32) {
+pub fn video(peer: &str, congested: bool) {
     let now = Instant::now();
     let mut peers = PEERS.lock().unwrap();
     peers.retain(|_, p| {
@@ -47,7 +47,7 @@ pub fn video(peer: &str, delay: u32) {
     });
     let p = peers.entry(peer.into()).or_default();
     p.video = Some(now);
-    p.congested = delay >= 200;
+    p.congested = congested;
 }
 pub fn input(peer: &str) {
     if let Some(p) = PEERS.lock().unwrap().get_mut(peer) {
@@ -66,6 +66,34 @@ pub fn file_allowance(peer: &str) -> Option<usize> {
 mod tests {
     use super::*;
     use hbb_common::tokio;
+    #[cfg(not(target_os = "ios"))]
+    #[test]
+    fn upload_and_download_pacing_use_the_same_queue_delay_feedback() {
+        let id = -103;
+        let incoming = "test:incoming-congestion";
+        let outgoing = "test:outgoing-congestion";
+        let mut upload_delay = crate::network_delay::NetworkDelay::default();
+        let mut registry = crate::server::video_service::VIDEO_QOS.lock().unwrap();
+        registry.on_connection_open(id);
+        for (delay, samples, expected_block) in [(250, 60, 16384), (850, 4, 4096), (250, 4, 16384)] {
+            for _ in 0..samples {
+                registry.user_network_delay(id, delay);
+                upload_delay.record(delay);
+            }
+            video(incoming, registry.congested(id));
+            video(outgoing, upload_delay.congested());
+            for key in [incoming, outgoing] {
+                // Advance past the previous pacing slot without a wall-clock sleep.
+                PEERS.lock().unwrap().get_mut(key).unwrap().next_file = None;
+                assert_eq!(file_allowance(key), Some(expected_block));
+                assert_eq!(file_allowance(key), None);
+            }
+        }
+        registry.on_connection_close(id);
+        let mut peers = PEERS.lock().unwrap();
+        peers.remove(incoming);
+        peers.remove(outgoing);
+    }
     #[test]
     fn transfers_share_budget_and_recover_after_desktop_closes() {
         let now = Instant::now();

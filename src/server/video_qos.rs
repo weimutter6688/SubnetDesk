@@ -1,7 +1,6 @@
 use super::*;
 use scrap::codec::{Quality, BR_BALANCED, BR_BEST, BR_SPEED};
 use std::{
-    collections::VecDeque,
     time::{Duration, Instant},
 };
 
@@ -24,49 +23,24 @@ const BR_MIN_HIGH_RESOLUTION: f32 = 0.1; // For high resolution, BR_MIN is still
 const MAX_BR_MULTIPLE: f32 = 1.0;
 const LAN_DEFAULT_BITRATE_RATIO: f32 = 2.0; // 100% in the custom quality UI
 
-const HISTORY_DELAY_LEN: usize = 2;
 const ADJUST_RATIO_INTERVAL: usize = 3; // Adjust quality ratio every 3 seconds
 const DYNAMIC_SCREEN_THRESHOLD: usize = 2; // Allow increase quality ratio if encode more than 2 times in one second
 const DELAY_THRESHOLD_150MS: u32 = 150; // 150ms is the threshold for good network condition
 
 #[derive(Default, Debug, Clone)]
 struct UserDelay {
-    delay_history: VecDeque<u32>,
+    network: crate::network_delay::NetworkDelay,
     fps: Option<u32>,
-    rtt_calculator: RttCalculator,
-    response_elapsed: u32,
     healthy_samples: u32,
 }
 
 impl UserDelay {
     fn add_delay(&mut self, delay: u32) {
-        self.rtt_calculator.update(delay);
-        if self.delay_history.len() >= HISTORY_DELAY_LEN {
-            self.delay_history.pop_front();
-        }
-        self.delay_history.push_back(delay);
+        self.network.record(delay);
     }
 
-    // Average delay minus RTT
     fn avg_delay(&self) -> u32 {
-        let len = self.delay_history.len();
-        if len > 0 {
-            let avg_delay = (self
-                .delay_history
-                .iter()
-                .map(|v| u64::from(*v))
-                .sum::<u64>()
-                / len as u64) as u32;
-
-            // If RTT is available, subtract it from average delay to get actual network latency
-            if let Some(rtt) = self.rtt_calculator.get_rtt() {
-                avg_delay.max(self.response_elapsed).saturating_sub(rtt)
-            } else {
-                avg_delay.max(self.response_elapsed)
-            }
-        } else {
-            self.response_elapsed.max(DELAY_THRESHOLD_150MS)
-        }
+        self.network.queue_delay()
     }
 
     fn adjust_frame_budget(&mut self, ceiling: u32) {
@@ -304,7 +278,6 @@ impl VideoQoS {
         let highest_fps = self.highest_fps();
         if let Some(user) = self.users.get_mut(&id) {
             let delay = delay.max(10);
-            user.delay.response_elapsed = 0;
             user.delay.add_delay(delay);
             user.delay.adjust_frame_budget(highest_fps);
         }
@@ -318,7 +291,7 @@ impl VideoQoS {
             if elapsed >= 1000 {
                 // An outstanding probe is a lower bound, not a completed RTT
                 // sample. Do not let a stalled connection redefine baseline RTT.
-                user.delay.response_elapsed = elapsed.min(u32::MAX as u128) as u32;
+                user.delay.network.stalled(elapsed);
                 user.delay.adjust_frame_budget(highest_fps);
             }
         }
@@ -542,6 +515,9 @@ impl VideoQoSRegistry {
     }
     pub fn on_connection_open(&mut self, id: i32) { self.peer(id); }
     pub fn on_connection_close(&mut self, id: i32) { self.peers.remove(&id); }
+    pub fn congested(&self, id: i32) -> bool {
+        self.peers.get(&id).map_or(false, |q| q.users.values().any(|u| u.delay.network.congested()))
+    }
     pub fn bitrate(&self, id: i32) -> u32 { self.peers.get(&id).map_or(0, VideoQoS::bitrate) }
     pub fn report(&self, id: i32) -> TestDelay {
         self.peers.get(&id).map_or_else(TestDelay::new, |q| TestDelay {
@@ -571,64 +547,6 @@ impl VideoQoSRegistry {
     }
     pub fn remove_display(&mut self, name: &str) {
         for q in self.peers.values_mut() { q.remove_display(name); }
-    }
-}
-
-#[derive(Default, Debug, Clone)]
-struct RttCalculator {
-    min_rtt: Option<u32>,        // Historical minimum RTT ever observed
-    window_min_rtt: Option<u32>, // Minimum RTT within last 60 samples
-    smoothed_rtt: Option<u32>,   // Smoothed RTT estimation
-    samples: VecDeque<u32>,      // Last 60 RTT samples
-}
-
-impl RttCalculator {
-    const WINDOW_SAMPLES: usize = 60; // Keep last 60 samples
-    const MIN_SAMPLES: usize = 10; // Require at least 10 samples
-    const ALPHA: f32 = 0.5; // Smoothing factor for weighted average
-
-    /// Update RTT estimates with a new sample
-    pub fn update(&mut self, delay: u32) {
-        // 1. Update historical minimum RTT
-        match self.min_rtt {
-            Some(min_rtt) if delay < min_rtt => self.min_rtt = Some(delay),
-            None => self.min_rtt = Some(delay),
-            _ => {}
-        }
-
-        // 2. Update sample window
-        if self.samples.len() >= Self::WINDOW_SAMPLES {
-            self.samples.pop_front();
-        }
-        self.samples.push_back(delay);
-
-        // 3. Calculate minimum RTT within the window
-        self.window_min_rtt = self.samples.iter().min().copied();
-
-        // 4. Calculate smoothed RTT
-        // Use weighted average if we have enough samples
-        if self.samples.len() >= Self::WINDOW_SAMPLES {
-            if let (Some(min), Some(window_min)) = (self.min_rtt, self.window_min_rtt) {
-                // Weighted average of historical minimum and window minimum
-                let new_srtt =
-                    ((1.0 - Self::ALPHA) * min as f32 + Self::ALPHA * window_min as f32) as u32;
-                self.smoothed_rtt = Some(new_srtt);
-            }
-        }
-    }
-
-    /// Get current RTT estimate
-    /// Returns None if no valid estimation is available
-    pub fn get_rtt(&self) -> Option<u32> {
-        if let Some(rtt) = self.smoothed_rtt {
-            return Some(rtt);
-        }
-        if self.samples.len() >= Self::MIN_SAMPLES {
-            if let Some(rtt) = self.min_rtt {
-                return Some(rtt);
-            }
-        }
-        None
     }
 }
 
@@ -752,12 +670,12 @@ mod tests {
             qos.user_network_delay(1, 20);
         }
         let previous_fps = qos.fps();
-        let baseline = qos.users[&1].delay.rtt_calculator.get_rtt();
+        let baseline = qos.users[&1].delay.network.baseline_rtt();
         qos.user_delay_response_elapsed(1, 3000);
         qos.adjust_ratio(true);
         assert!(qos.fps() <= previous_fps / 2);
         assert!(qos.ratio() < BR_BALANCED);
-        assert_eq!(qos.users[&1].delay.rtt_calculator.get_rtt(), baseline);
+        assert_eq!(qos.users[&1].delay.network.baseline_rtt(), baseline);
     }
 
     #[test]
@@ -801,7 +719,6 @@ mod tests {
         for _ in 0..5 {
             delay.add_delay(u32::MAX);
         }
-        assert_eq!(delay.delay_history.len(), HISTORY_DELAY_LEN);
         assert_eq!(delay.avg_delay(), u32::MAX);
     }
 }

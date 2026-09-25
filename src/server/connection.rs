@@ -871,7 +871,8 @@ impl Connection {
                         break;
                     }
                     if conn.is_authed_remote_conn() {
-                        crate::traffic::video(&format!("in:{}", conn.ip), conn.network_delay);
+                        let congested = video_service::VIDEO_QOS.lock().unwrap().congested(id);
+                        crate::traffic::video(&format!("in:{}", conn.ip), congested);
                     }
                     if conn.authorized
                         && conn.credential_revision_at_auth != 0

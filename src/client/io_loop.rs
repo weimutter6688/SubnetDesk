@@ -79,6 +79,7 @@ pub struct Remote<T: InvokeUiSession> {
     chroma: Arc<RwLock<Option<Chroma>>>,
     last_record_state: bool,
     sent_close_reason: bool,
+    network_delay: crate::network_delay::NetworkDelay,
 }
 
 #[derive(Default)]
@@ -128,6 +129,7 @@ impl<T: InvokeUiSession> Remote<T> {
             chroma: Default::default(),
             last_record_state: false,
             sent_close_reason: false,
+            network_delay: Default::default(),
         }
     }
 
@@ -289,7 +291,7 @@ impl<T: InvokeUiSession> Remote<T> {
                         }
                         _ = status_timer.tick() => {
                             if self.handler.is_default() {
-                                crate::traffic::video(&format!("out:{}", self.handler.get_id()), 0);
+                                crate::traffic::video(&format!("out:{}", self.handler.get_id()), self.network_delay.congested());
                             }
                             if self.handler.is_restarting_remote_device()
                                 && last_recv_time.elapsed() >= RESTART_REMOTE_DEVICE_NO_DATA_TIMEOUT
@@ -1838,6 +1840,9 @@ impl<T: InvokeUiSession> Remote<T> {
                     _ => {}
                 },
                 Some(message::Union::TestDelay(t)) => {
+                    if !t.from_client && t.last_delay > 0 {
+                        self.network_delay.record(t.last_delay);
+                    }
                     self.handler.handle_test_delay(t, peer).await;
                 }
                 Some(message::Union::AudioFrame(frame)) => {
