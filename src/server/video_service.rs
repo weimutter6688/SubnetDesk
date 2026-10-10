@@ -57,6 +57,8 @@ pub const OPTION_REFRESH: &'static str = "refresh";
 
 mod frame_cache;
 use frame_cache::{CachedFrame, FrameCache};
+mod watchdog;
+use watchdog::{Phase, Watchdog};
 
 lazy_static::lazy_static! {
     static ref FRAME_PENDING: Mutex<HashMap<(i32, usize), Instant>> = Default::default();
@@ -121,6 +123,7 @@ pub struct VideoService {
     sp: GenericService,
     idx: usize,
     source: VideoSource,
+    watchdog: Watchdog,
 }
 
 impl Deref for VideoService {
@@ -146,7 +149,10 @@ pub fn new(source: VideoSource, idx: usize) -> GenericService {
         sp: GenericService::new(get_service_name(source, idx), true),
         idx,
         source,
+        watchdog: Watchdog::new(),
     };
+    #[cfg(windows)]
+    vs.watchdog.start_recovery_monitor(vs.sp.name());
     GenericService::run(&vs, run);
     vs.sp
 }
@@ -614,6 +620,11 @@ fn prepare_viewers(
 }
 
 fn run(vs: VideoService) -> ResultType<()> {
+    let _activity = vs.watchdog.begin();
+    run_inner(vs)
+}
+
+fn run_inner(vs: VideoService) -> ResultType<()> {
     let mut _raii = Raii::new(vs.sp.name());
     // Wayland only support one video capturer for now. It is ok to call ensure_inited() here.
     //
@@ -674,8 +685,10 @@ fn run(vs: VideoService) -> ResultType<()> {
     #[cfg(target_os = "linux")]
     let mut would_block_count = 0u32;
     let mut last_frame = Instant::now();
+    let _cleanup = vs.watchdog.cleanup_guard();
 
     while sp.ok() {
+        vs.watchdog.checkpoint(Phase::Preparing);
         #[cfg(windows)]
         check_uac_switch(c.privacy_mode_id, c._capturer_privacy_mode_id)?;
         drain_frame_acks(display_idx, &mut viewers);
@@ -733,6 +746,7 @@ fn run(vs: VideoService) -> ResultType<()> {
         let time = now - start;
         let ms = (time.as_secs() * 1000 + time.subsec_millis() as u64) as i64;
         let capture_begin = Instant::now();
+        vs.watchdog.checkpoint(Phase::Capturing);
         let res = match c.frame(spf) {
             Ok(frame) => {
                 capture_ms = capture_begin.elapsed().as_millis() as u32;
@@ -786,6 +800,7 @@ fn run(vs: VideoService) -> ResultType<()> {
                     }
 
                     latest_frame.update(&frame)?;
+                    vs.watchdog.checkpoint(Phase::Encoding);
                     send_cached_frames(display_idx, &sp, &mut viewers, &latest_frame, ms,
                         &recorder, record_owner, capture_ms)?;
                 }
@@ -836,6 +851,7 @@ fn run(vs: VideoService) -> ResultType<()> {
                         }
                     }
                 }
+                vs.watchdog.checkpoint(Phase::Encoding);
                 send_cached_frames(display_idx, &sp, &mut viewers, &latest_frame, ms,
                     &recorder, record_owner, capture_ms)?;
             }
