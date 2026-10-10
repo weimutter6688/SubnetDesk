@@ -572,6 +572,16 @@ pub fn get_current_session_id(share_rdp: bool) -> DWORD {
     unsafe { get_current_session(if share_rdp { TRUE } else { FALSE }) }
 }
 
+fn service_session_change(current: DWORD, observed: DWORD) -> Option<DWORD> {
+    // Windows reports no active console while attaching/detaching a session.
+    // Keep the existing server until a real replacement session is available.
+    if observed == u32::MAX || observed == current {
+        None
+    } else {
+        Some(observed)
+    }
+}
+
 #[inline]
 fn resolve_expected_active_session_id_for_service(session_id: u32) -> Option<u32> {
     let share_rdp_enabled = is_share_rdp();
@@ -664,7 +674,11 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
 
     let mut session_id = unsafe { get_current_session(share_rdp()) };
     log::info!("session id {}", session_id);
-    let mut h_process = launch_server(session_id, true).await.unwrap_or(NULL);
+    let mut h_process = if session_id == u32::MAX {
+        NULL
+    } else {
+        launch_server(session_id, true).await.unwrap_or(NULL)
+    };
     let mut incoming = ipc::new_listener(crate::POSTFIX_SERVICE).await?;
     let mut stored_usid = None;
     loop {
@@ -674,8 +688,11 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
             .collect();
         if !sids.contains(&session_id) || !is_share_rdp() {
             let current_active_session = unsafe { get_current_session(share_rdp()) };
-            if session_id != current_active_session {
-                session_id = current_active_session;
+            if let Some(next_session_id) =
+                service_session_change(session_id, current_active_session)
+            {
+                log::info!("session changed from {} to {}", session_id, next_session_id);
+                session_id = next_session_id;
                 // https://github.com/rustdesk/rustdesk/discussions/10039
                 let count = ipc::get_port_forward_session_count(1000).await.unwrap_or(0);
                 if count == 0 {
@@ -708,7 +725,7 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
                             }
                             ipc::Data::UserSid(usid) => {
                                 if let Some(usid) = usid {
-                                    if session_id != usid {
+                                    if let Some(usid) = service_session_change(session_id, usid) {
                                         log::info!(
                                             "session changed from {} to {}",
                                             session_id,
@@ -783,6 +800,9 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
 }
 
 async fn launch_server(session_id: DWORD, close_first: bool) -> ResultType<HANDLE> {
+    if session_id == u32::MAX {
+        bail!("Cannot launch server without an available Windows session");
+    }
     if close_first {
         // in case started some elsewhere
         send_close_async("").await.ok();
@@ -4276,6 +4296,27 @@ pub(super) fn get_pids_with_first_arg_by_wmic<S1: AsRef<str>, S2: AsRef<str>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn service_keeps_session_during_windows_console_transition() {
+        let mut current = 10;
+        let mut restarts = Vec::new();
+        for observed in [10, u32::MAX, u32::MAX, 1, 1] {
+            if let Some(next) = service_session_change(current, observed) {
+                current = next;
+                restarts.push(next);
+            }
+        }
+        assert_eq!(restarts, vec![1]);
+        assert_eq!(current, 1);
+    }
+
+    #[test]
+    fn service_waits_for_valid_session_at_startup() {
+        assert_eq!(service_session_change(u32::MAX, u32::MAX), None);
+        assert_eq!(service_session_change(u32::MAX, 1), Some(1));
+        assert_eq!(service_session_change(1, 10), Some(10));
+    }
 
     // Test-only reusable Win32 HANDLE RAII helper.
     // If a future non-test path needs the same pattern, move it out of this test module.
