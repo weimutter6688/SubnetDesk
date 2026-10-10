@@ -261,9 +261,9 @@ pub struct Config {
     pub id: String, // use
     #[serde(default, deserialize_with = "deserialize_string")]
     enc_id: String, // store
-    #[serde(default, deserialize_with = "deserialize_string")]
+    #[serde(default, skip_serializing, deserialize_with = "deserialize_string")]
     password: String,
-    #[serde(default, deserialize_with = "deserialize_string")]
+    #[serde(default, skip_serializing, deserialize_with = "deserialize_string")]
     salt: String,
     #[serde(default, deserialize_with = "deserialize_keypair")]
     key_pair: KeyPair, // sk, pk
@@ -3402,6 +3402,15 @@ mod tests {
         assert!(!config.key_confirmed);
         assert!(config.keys_confirmed.is_empty());
         assert_eq!(config.lan_schema_version, LAN_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn legacy_password_fields_cannot_be_serialized_even_before_sanitization() {
+        let legacy: Config = toml::from_str("password = 'old-hash'\nsalt = 'old-salt'\n").unwrap();
+        let stored = toml::to_string(&legacy).unwrap();
+        assert!(!stored.contains("old-hash"));
+        assert!(!stored.contains("old-salt"));
+        assert!(!stored.lines().any(|line| line.starts_with("password =") || line.starts_with("salt =")));
     }
 
     #[test]
