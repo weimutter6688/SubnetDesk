@@ -12,7 +12,7 @@ use hbb_common::{
     tcp, timeout, ResultType, Stream,
 };
 
-const TRANSCRIPT_PREFIX: &[u8] = b"rustdesk-lan-handshake-v1\0";
+const TRANSCRIPT_PREFIX: &[u8] = b"rustdesk-lan-handshake-v2\0";
 
 pub struct LanPeerIdentity {
     pub device_public_key: Vec<u8>,
@@ -103,7 +103,7 @@ pub async fn client_handshake(stream: &mut Stream) -> ResultType<LanPeerIdentity
         ..Default::default()
     });
     timeout(CONNECT_TIMEOUT, stream.send(&key_message)).await??;
-    stream.set_key(key);
+    stream.set_key(key, tcp::EndpointRole::Client);
 
     let device_public_key = server_hello.device_public_key.to_vec();
     Ok(LanPeerIdentity {
@@ -177,7 +177,7 @@ async fn server_handshake_with_identity(
         &client_key.asymmetric_value,
         &ephemeral_secret_key,
     )?;
-    stream.set_key(key);
+    stream.set_key(key, tcp::EndpointRole::Server);
     Ok(())
 }
 

@@ -15,7 +15,7 @@ test("browser handshake interoperates with libsodium box and secretbox primitive
   const signature = sodium.crypto_sign(transcript, device.privateKey);
 
   const accepted = await client.acceptServerHello({
-    protocol_version: 1,
+    protocol_version: 2,
     server_nonce: serverNonce,
     device_public_key: device.publicKey,
     ephemeral_public_key: ephemeral.publicKey,
@@ -36,13 +36,45 @@ test("browser handshake interoperates with libsodium box and secretbox primitive
   expect(sharedKey.length).toBe(sodium.crypto_secretbox_KEYBYTES);
 
   const outbound = client.encrypt(Message.create({ misc: { video_received: true } }));
-  const opened = sodium.crypto_secretbox_open_easy(outbound, nonceForSequence(1n), sharedKey);
+  const opened = sodium.crypto_secretbox_open_easy(outbound, nonceForSequence(1n, "client-to-server"), sharedKey);
   expect(Message.decode(opened).misc?.video_received).toBe(true);
 
   const reply = sodium.crypto_secretbox_easy(
     Message.encode(Message.create({ test_delay: { time: 42n } })).finish(),
-    nonceForSequence(1n),
+    nonceForSequence(1n, "server-to-client"),
     sharedKey,
   );
   expect(client.decrypt(reply).test_delay?.time).toBe(42n);
+  expect(() => client.decrypt(reply)).toThrow();
+});
+
+test("browser rejects old protocol peers without a downgrade", async () => {
+  const client = await LanCryptoSession.create();
+  expect(Message.decode(client.clientHello()).lan_client_hello?.protocol_version).toBe(2);
+  await expect(client.acceptServerHello({
+    protocol_version: 1,
+    server_nonce: new Uint8Array(32),
+    device_public_key: new Uint8Array(32),
+    ephemeral_public_key: new Uint8Array(32),
+    signature: new Uint8Array(0),
+  })).rejects.toThrow("协议版本不匹配");
+});
+
+test("browser rejects reflection of its own outbound ciphertext", async () => {
+  const client = await LanCryptoSession.create();
+  const device = sodium.crypto_sign_keypair();
+  const ephemeral = sodium.crypto_box_keypair();
+  const serverNonce = sodium.randombytes_buf(32);
+  await client.acceptServerHello({
+    protocol_version: 2,
+    server_nonce: serverNonce,
+    device_public_key: device.publicKey,
+    ephemeral_public_key: ephemeral.publicKey,
+    signature: sodium.crypto_sign(
+      buildHandshakeTranscript(client.clientNonce, serverNonce, ephemeral.publicKey),
+      device.privateKey,
+    ),
+  });
+  const outbound = client.encrypt(Message.create({ test_delay: { time: 42n } }));
+  expect(() => client.decrypt(outbound)).toThrow();
 });

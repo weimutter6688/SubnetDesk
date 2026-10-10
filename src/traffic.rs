@@ -122,8 +122,8 @@ mod tests {
         let mut server = FramedStream::from(a, addr);
         let mut client = FramedStream::from(b, addr);
         let key = hbb_common::sodiumoxide::crypto::secretbox::Key([7; 32]);
-        server.set_key(key.clone());
-        client.set_key(key);
+        server.set_key(key.clone(), hbb_common::tcp::EndpointRole::Server);
+        client.set_key(key, hbb_common::tcp::EndpointRole::Client);
         let mut frame = Message::new();
         frame.set_audio_frame(AudioFrame {
             data: vec![3; 65536].into(),

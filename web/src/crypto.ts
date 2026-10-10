@@ -1,9 +1,7 @@
 import sodium from "libsodium-wrappers";
 import { hash as sha256 } from "fast-sha256";
 import { Message, type LanServerHello } from "./generated/message";
-import { buildHandshakeTranscript, bytesToHex, nonceForSequence } from "./protocol";
-
-const PROTOCOL_VERSION = 1;
+import { LAN_PROTOCOL_VERSION, buildHandshakeTranscript, bytesToHex, nonceForSequence } from "./protocol";
 const ZERO_NONCE = new Uint8Array(24);
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
@@ -34,7 +32,7 @@ export class LanCryptoSession {
     return Message.encode(
       Message.create({
         lan_client_hello: {
-          protocol_version: PROTOCOL_VERSION,
+          protocol_version: LAN_PROTOCOL_VERSION,
           client_nonce: this.clientNonce,
           client_capabilities: 0n,
         },
@@ -45,8 +43,8 @@ export class LanCryptoSession {
   async acceptServerHello(
     hello: LanServerHello,
   ): Promise<{ keyMessage: Uint8Array; fingerprint: string }> {
-    if (hello.protocol_version !== PROTOCOL_VERSION) {
-      throw new Error(`协议版本不匹配（服务器 ${hello.protocol_version}，浏览器 ${PROTOCOL_VERSION}）`);
+    if (hello.protocol_version !== LAN_PROTOCOL_VERSION) {
+      throw new Error(`协议版本不匹配（服务器 ${hello.protocol_version}，浏览器 ${LAN_PROTOCOL_VERSION}）`);
     }
     if (hello.device_public_key.length !== 32 || hello.ephemeral_public_key.length !== 32) {
       throw new Error("服务器公钥格式无效");
@@ -92,7 +90,7 @@ export class LanCryptoSession {
     this.sendSequence += 1n;
     return sodium.crypto_secretbox_easy(
       Message.encode(message).finish(),
-      nonceForSequence(this.sendSequence),
+      nonceForSequence(this.sendSequence, "client-to-server"),
       this.symmetricKey,
     );
   }
@@ -102,7 +100,7 @@ export class LanCryptoSession {
     this.receiveSequence += 1n;
     const opened = sodium.crypto_secretbox_open_easy(
       payload,
-      nonceForSequence(this.receiveSequence),
+      nonceForSequence(this.receiveSequence, "server-to-client"),
       this.symmetricKey,
     );
     if (!opened) throw new Error("加密消息校验失败");

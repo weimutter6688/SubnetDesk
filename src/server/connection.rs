@@ -1099,7 +1099,6 @@ impl Connection {
         let mut last_recv_time = Instant::now();
         if let Some(mut forward) = self.port_forward_socket.take() {
             log::info!("Running port forwarding loop");
-            self.stream.set_raw();
             loop {
                 tokio::select! {
                     Some(data) = rx_from_cm.recv() => {
@@ -1117,7 +1116,7 @@ impl Connection {
                     res = forward.next() => {
                         if let Some(res) = res {
                             last_recv_time = Instant::now();
-                            self.stream.send_bytes(res?.into()).await?;
+                            self.stream.send_raw(res?.to_vec()).await?;
                         } else {
                             bail!("Forward reset by the peer");
                         }
@@ -5738,8 +5737,8 @@ mod test {
                 let mut server = Stream::from_framed(FramedStream::from(a, address));
                 let mut client = FramedStream::from(b, address);
                 let key = hbb_common::sodiumoxide::crypto::secretbox::Key([9; 32]);
-                server.set_key(key.clone());
-                client.set_key(key);
+                server.set_key(key.clone(), hbb_common::tcp::EndpointRole::Server);
+                client.set_key(key, hbb_common::tcp::EndpointRole::Client);
                 let clipboard = Clipboard { content: vec![17; 65536].into(), ..Default::default() };
                 let mut message = Message::new();
                 if multi {

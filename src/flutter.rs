@@ -1385,7 +1385,7 @@ pub fn session_add(
     } else {
         let payload: LanCredentialPayload = serde_json::from_str(&password)
             .map_err(|_| anyhow!("Invalid LAN credential payload"))?;
-        if payload.lan_version != hbb_common::lan::PROTOCOL_VERSION {
+        if payload.lan_version != hbb_common::lan::CREDENTIAL_PAYLOAD_VERSION {
             bail!("Unsupported LAN credential payload version");
         }
         if !payload.identity_id.is_empty() {

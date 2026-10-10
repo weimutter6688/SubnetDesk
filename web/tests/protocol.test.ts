@@ -15,9 +15,9 @@ describe("LAN protocol helpers", () => {
     const transcript = buildHandshakeTranscript(clientNonce, serverNonce, serverKey);
 
     expect(new TextDecoder().decode(transcript.slice(0, 26))).toBe(
-      "rustdesk-lan-handshake-v1\0",
+      "rustdesk-lan-handshake-v2\0",
     );
-    expect(Array.from(transcript.slice(26, 30))).toEqual([0, 0, 0, 1]);
+    expect(Array.from(transcript.slice(26, 30))).toEqual([0, 0, 0, 2]);
     expect(transcript.length).toBe(126);
   });
 
@@ -28,8 +28,10 @@ describe("LAN protocol helpers", () => {
   });
 
   test("uses little endian monotonically increasing secretbox nonces", () => {
-    expect(Array.from(nonceForSequence(1n).slice(0, 9))).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 0]);
-    expect(Array.from(nonceForSequence(0x0102n).slice(0, 3))).toEqual([2, 1, 0]);
+    expect(Array.from(nonceForSequence(1n, "client-to-server").slice(0, 9))).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(Array.from(nonceForSequence(1n, "server-to-client").slice(0, 9))).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 1]);
+    expect(Array.from(nonceForSequence(0x0102n, "client-to-server").slice(0, 3))).toEqual([2, 1, 0]);
+    expect(() => nonceForSequence(0x1_0000_0000_0000_0000n, "client-to-server")).toThrow();
   });
 
   test("maps letterboxed canvas coordinates to the remote display", () => {

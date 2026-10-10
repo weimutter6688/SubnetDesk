@@ -1,4 +1,5 @@
-const TRANSCRIPT_PREFIX = new TextEncoder().encode("rustdesk-lan-handshake-v1\0");
+export const LAN_PROTOCOL_VERSION = 2;
+const TRANSCRIPT_PREFIX = new TextEncoder().encode("rustdesk-lan-handshake-v2\0");
 const NONCE_LENGTH = 32;
 const PUBLIC_KEY_LENGTH = 32;
 const SECRETBOX_NONCE_LENGTH = 24;
@@ -22,7 +23,7 @@ export function buildHandshakeTranscript(
   let offset = 0;
   transcript.set(TRANSCRIPT_PREFIX, offset);
   offset += TRANSCRIPT_PREFIX.length;
-  new DataView(transcript.buffer).setUint32(offset, 1, false);
+  new DataView(transcript.buffer).setUint32(offset, LAN_PROTOCOL_VERSION, false);
   offset += 4;
   transcript.set(clientNonce, offset);
   offset += clientNonce.length;
@@ -32,12 +33,16 @@ export function buildHandshakeTranscript(
   return transcript;
 }
 
-export function nonceForSequence(sequence: bigint): Uint8Array {
+export function nonceForSequence(
+  sequence: bigint,
+  direction: "client-to-server" | "server-to-client",
+): Uint8Array {
   if (sequence < 0n || sequence > 0xffff_ffff_ffff_ffffn) {
     throw new Error("消息序号超出范围");
   }
   const nonce = new Uint8Array(SECRETBOX_NONCE_LENGTH);
   new DataView(nonce.buffer).setBigUint64(0, sequence, true);
+  nonce[8] = direction === "server-to-client" ? 1 : 0;
   return nonce;
 }
 
