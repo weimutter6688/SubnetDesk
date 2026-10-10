@@ -45,6 +45,7 @@ impl<T> Drop for ComPtr<T> {
 pub struct CachedTexture {
     texture: ComPtr<ID3D11Texture2D>,
     context: ComPtr<ID3D11DeviceContext>,
+    staging: Option<ComPtr<ID3D11Texture2D>>,
 }
 
 impl CachedTexture {
@@ -76,7 +77,7 @@ impl CachedTexture {
         if texture.is_null() || context.is_null() {
             return Err(io::ErrorKind::NotFound.into());
         }
-        Ok(Self { texture, context })
+        Ok(Self { texture, context, staging: None })
     }
 
     /// # Safety
@@ -88,6 +89,39 @@ impl CachedTexture {
     pub fn as_ptr(&self) -> *mut c_void {
         self.texture.0 as *mut _
     }
+
+    /// Read a snapshot for viewers that need CPU scaling, without changing the
+    /// capture/encoder input used by viewers consuming the original texture.
+    /// All context access remains on the capture thread.
+    pub fn readback(&mut self, data: &mut Vec<u8>) -> io::Result<(usize, usize, usize)> {
+        unsafe {
+            let mut desc: D3D11_TEXTURE2D_DESC = mem::zeroed();
+            (*self.texture.0).GetDesc(&mut desc);
+            if self.staging.is_none() {
+                let mut device = ptr::null_mut();
+                (*self.texture.0).GetDevice(&mut device);
+                let device = ComPtr(device);
+                desc.Usage = D3D11_USAGE_STAGING;
+                desc.BindFlags = 0;
+                desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                desc.MiscFlags = 0;
+                let mut texture = ptr::null_mut();
+                wrap_hresult((*device.0).CreateTexture2D(&desc, ptr::null(), &mut texture))?;
+                self.staging = Some(ComPtr(texture));
+            }
+            let Some(staging) = &self.staging else {
+                return Err(io::ErrorKind::NotFound.into());
+            };
+            (*self.context.0).CopyResource(staging.0 as *mut _, self.texture.0 as *mut _);
+            let mut mapped: D3D11_MAPPED_SUBRESOURCE = mem::zeroed();
+            wrap_hresult((*self.context.0).Map(staging.0 as *mut _, 0, D3D11_MAP_READ, 0, &mut mapped))?;
+            let len = mapped.RowPitch as usize * desc.Height as usize;
+            data.resize(len, 0);
+            data.copy_from_slice(slice::from_raw_parts(mapped.pData as *const u8, len));
+            (*self.context.0).Unmap(staging.0 as *mut _, 0);
+            Ok((desc.Width as usize, desc.Height as usize, mapped.RowPitch as usize))
+        }
+    }
 }
 
 pub struct Capturer {
@@ -97,6 +131,7 @@ pub struct Capturer {
     duplication: ComPtr<IDXGIOutputDuplication>,
     fastlane: bool,
     surface: ComPtr<IDXGISurface>,
+    staging: Option<(ComPtr<ID3D11Texture2D>, D3D11_TEXTURE2D_DESC)>,
     texture: ComPtr<ID3D11Texture2D>,
     width: usize,
     height: usize,
@@ -107,6 +142,62 @@ pub struct Capturer {
     output_texture: bool,
     adapter_desc1: DXGI_ADAPTER_DESC1,
     rotate: Rotate,
+}
+
+fn same_staging_desc(a: &D3D11_TEXTURE2D_DESC, b: &D3D11_TEXTURE2D_DESC) -> bool {
+    a.Width == b.Width && a.Height == b.Height && a.Format == b.Format
+        && a.MipLevels == b.MipLevels && a.ArraySize == b.ArraySize
+        && a.SampleDesc.Count == b.SampleDesc.Count && a.SampleDesc.Quality == b.SampleDesc.Quality
+}
+
+#[cfg(test)]
+mod performance_tests {
+    use super::*;
+    use winapi::{shared::dxgiformat::DXGI_FORMAT_B8G8R8A8_UNORM, um::d3dcommon::D3D_DRIVER_TYPE_WARP};
+
+    #[test]
+    fn texture_snapshot_readback_reuses_staging_and_preserves_pixels() {
+        unsafe {
+            let mut device = ptr::null_mut();
+            let mut context = ptr::null_mut();
+            wrap_hresult(D3D11CreateDevice(ptr::null_mut(), D3D_DRIVER_TYPE_WARP, ptr::null_mut(),
+                0, ptr::null(), 0, D3D11_SDK_VERSION, &mut device, ptr::null_mut(), &mut context)).unwrap();
+            let device = ComPtr(device);
+            let context = ComPtr(context);
+            let mut desc: D3D11_TEXTURE2D_DESC = mem::zeroed();
+            desc.Width = 16;
+            desc.Height = 8;
+            desc.MipLevels = 1;
+            desc.ArraySize = 1;
+            desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            desc.SampleDesc.Count = 1;
+            desc.Usage = D3D11_USAGE_DEFAULT;
+            let initial = vec![51u8; 16 * 8 * 4];
+            let init = D3D11_SUBRESOURCE_DATA { pSysMem: initial.as_ptr() as _, SysMemPitch: 64, SysMemSlicePitch: 0 };
+            let mut source = ptr::null_mut();
+            wrap_hresult((*device.0).CreateTexture2D(&desc, &init, &mut source)).unwrap();
+            let source = ComPtr(source);
+            let mut snapshot = CachedTexture::new(source.0 as _).unwrap();
+            snapshot.copy_from(source.0 as _);
+            let mut pixels = Vec::new();
+            let (w, h, stride) = snapshot.readback(&mut pixels).unwrap();
+            assert_eq!((w, h), (16, 8));
+            let staging = snapshot.staging.as_ref().unwrap().0;
+            for row in pixels.chunks(stride) { assert!(row[..w * 4].iter().all(|&v| v == 51)); }
+            let changed = vec![153u8; initial.len()];
+            (*context.0).UpdateSubresource(source.0 as _, 0, ptr::null(), changed.as_ptr() as _, 64, 0);
+            snapshot.readback(&mut pixels).unwrap();
+            for row in pixels.chunks(stride) { assert!(row[..w * 4].iter().all(|&v| v == 51)); }
+            snapshot.copy_from(source.0 as _);
+            snapshot.readback(&mut pixels).unwrap();
+            assert_eq!(snapshot.staging.as_ref().unwrap().0, staging);
+            for row in pixels.chunks(stride) { assert!(row[..w * 4].iter().all(|&v| v == 153)); }
+            // Shape/format changes must invalidate a capture staging resource.
+            let mut resized = desc;
+            resized.Width *= 2;
+            assert!(!same_staging_desc(&desc, &resized));
+        }
+    }
 }
 
 impl Capturer {
@@ -212,6 +303,7 @@ impl Capturer {
             duplication: ComPtr(duplication),
             fastlane: desc.DesktopImageInSystemMemory == TRUE,
             surface: ComPtr(ptr::null_mut()),
+            staging: None,
             texture: ComPtr(ptr::null_mut()),
             width: display.width() as usize,
             height: display.height() as usize,
@@ -395,23 +487,22 @@ impl Capturer {
         if self.fastlane {
             wrap_hresult((*self.duplication.0).MapDesktopSurface(&mut rect))?;
         } else {
-            self.surface = ComPtr(self.ohgodwhat(frame.0)?);
+            self.copy_to_staging(frame.0)?;
             wrap_hresult((*self.surface.0).Map(&mut rect, DXGI_MAP_READ))?;
         }
         Ok((rect.pBits, rect.Pitch))
     }
 
     // copy from GPU memory to system memory
-    unsafe fn ohgodwhat(&mut self, frame: *mut IDXGIResource) -> io::Result<*mut IDXGISurface> {
+    unsafe fn copy_to_staging(&mut self, frame: *mut IDXGIResource) -> io::Result<()> {
         let mut texture: *mut ID3D11Texture2D = ptr::null_mut();
-        (*frame).QueryInterface(
+        wrap_hresult((*frame).QueryInterface(
             &IID_ID3D11Texture2D,
             &mut texture as *mut *mut _ as *mut *mut _,
-        );
+        ))?;
         let texture = ComPtr(texture);
 
-        #[allow(invalid_value)]
-        let mut texture_desc = mem::MaybeUninit::uninit().assume_init();
+        let mut texture_desc: D3D11_TEXTURE2D_DESC = mem::zeroed();
         (*texture.0).GetDesc(&mut texture_desc);
 
         texture_desc.Usage = D3D11_USAGE_STAGING;
@@ -419,24 +510,25 @@ impl Capturer {
         texture_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         texture_desc.MiscFlags = 0;
 
-        let mut readable = ptr::null_mut();
-        wrap_hresult((*self.device.0).CreateTexture2D(
-            &mut texture_desc,
-            ptr::null(),
-            &mut readable,
-        ))?;
-        (*readable).SetEvictionPriority(DXGI_RESOURCE_PRIORITY_MAXIMUM);
-        let readable = ComPtr(readable);
-
-        let mut surface = ptr::null_mut();
-        (*readable.0).QueryInterface(
-            &IID_IDXGISurface,
-            &mut surface as *mut *mut _ as *mut *mut _,
-        );
-
-        (*self.context.0).CopyResource(readable.0 as *mut _, texture.0 as *mut _);
-
-        Ok(surface)
+        if self.staging.as_ref().map_or(true, |(_, desc)| !same_staging_desc(desc, &texture_desc)) {
+            let mut readable = ptr::null_mut();
+            wrap_hresult((*self.device.0).CreateTexture2D(
+                &texture_desc, ptr::null(), &mut readable,
+            ))?;
+            let readable = ComPtr(readable);
+            (*readable.0).SetEvictionPriority(DXGI_RESOURCE_PRIORITY_MAXIMUM);
+            let mut surface = ptr::null_mut();
+            wrap_hresult((*readable.0).QueryInterface(
+                &IID_IDXGISurface, &mut surface as *mut *mut _ as *mut *mut _,
+            ))?;
+            self.surface = ComPtr(surface);
+            self.staging = Some((readable, texture_desc));
+        }
+        if let Some((readable, _)) = &self.staging {
+            // get_pixelbuffer() has unmapped the preceding frame before this copy.
+            (*self.context.0).CopyResource(readable.0 as *mut _, texture.0 as *mut _);
+        }
+        Ok(())
     }
 
     pub fn frame<'a>(&'a mut self, timeout: UINT) -> io::Result<Frame<'a>> {

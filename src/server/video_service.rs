@@ -47,7 +47,6 @@ use scrap::{
 #[cfg(windows)]
 use std::sync::Once;
 use std::{
-    collections::HashSet,
     io::ErrorKind::WouldBlock,
     ops::{Deref, DerefMut},
     time::{self, Duration, Instant},
@@ -59,6 +58,10 @@ mod frame_cache;
 use frame_cache::{CachedFrame, FrameCache};
 mod watchdog;
 use watchdog::{Phase, Watchdog};
+mod pixel_worker;
+use pixel_worker::{EncoderInfo, PixelWorker, Reply as PixelReply};
+mod pacing;
+use pacing::{FrameWaiter, Pacer};
 
 lazy_static::lazy_static! {
     static ref FRAME_PENDING: Mutex<HashMap<(i32, usize), Instant>> = Default::default();
@@ -86,6 +89,7 @@ pub fn notify_video_frame_fetched(display_idx: usize, conn_id: i32, frame_tm: Op
     };
     if let Some(sent) = sent {
         VIDEO_QOS.lock().unwrap().peer(conn_id).send_ms = sent.elapsed().as_millis() as u32;
+        FrameWaiter::notify(display_idx);
     }
 }
 
@@ -432,8 +436,14 @@ fn get_capturer(
     }
 }
 
+enum ViewerCodec {
+    Local(Encoder),
+    Pixels(PixelWorker),
+}
+
 struct ViewerEncoder {
-    encoder: Encoder,
+    encoder: ViewerCodec,
+    info: Option<EncoderInfo>,
     config: EncoderCfg,
     codec: CodecFormat,
     use_i444: bool,
@@ -443,72 +453,113 @@ struct ViewerEncoder {
     record: bool,
     spf: Duration,
     pending: Option<Instant>,
-    last_sent: Option<Instant>,
+    pacer: Pacer,
+    capture_ms: u32,
     second: Instant,
     count: usize,
     failures: usize,
     first_frame: bool,
     repeat: usize,
     frame_generation: u64,
-    yuv: Vec<u8>,
-    mid: Vec<u8>,
-    scaled: Vec<u8>,
 }
 
 impl ViewerEncoder {
     fn input_texture(&self) -> bool {
         #[cfg(feature = "vram")]
-        { self.encoder.input_texture() }
+        { matches!(&self.encoder, ViewerCodec::Local(e) if e.input_texture()) }
         #[cfg(not(feature = "vram"))]
         { false }
     }
 
-    fn ready(&self) -> bool {
-        self.pending.is_none() && self.last_sent.map_or(true, |t| t.elapsed() >= self.spf)
+    fn busy(&self) -> bool {
+        matches!(&self.encoder, ViewerCodec::Pixels(worker) if worker.busy)
+    }
+
+    fn ready_at(&self, now: Instant) -> bool {
+        !self.busy() && self.info.is_some() && self.pending.is_none() && self.pacer.remaining(now, self.spf).is_zero()
     }
     fn sent(&mut self) {
         let now = Instant::now();
         self.pending = Some(now);
-        self.last_sent = Some(now);
         self.count += 1;
     }
 }
 
 fn send_cached_frames(
     display: usize, sp: &GenericService, viewers: &mut HashMap<i32, ViewerEncoder>,
-    cache: &FrameCache, ms: i64, recorder: &Arc<Mutex<Option<Recorder>>>,
-    record_owner: Option<i32>, capture_ms: u32,
+    cache: &mut FrameCache, ms: i64, recorder: &Arc<Mutex<Option<Recorder>>>,
+    record_owner: Option<i32>, capture_ms: u32, capture_started: Instant,
 ) -> ResultType<()> {
-    let Some(frame) = &cache.frame else { return Ok(()); };
+    if viewers.values().any(|v| v.ready_at(capture_started) && !v.input_texture()) {
+        cache.ensure_pixels()?;
+    }
     for (&id, viewer) in viewers.iter_mut() {
         let new_frame = viewer.frame_generation != cache.generation;
-        if !viewer.ready() || !(new_frame || viewer.first_frame
-            || (!viewer.encoder.latency_free() && viewer.repeat < 10)) { continue; }
+        if !viewer.ready_at(capture_started) || !(new_frame || viewer.first_frame
+            || (viewer.info.map_or(false, |i| !i.latency_free) && viewer.repeat < 10)) { continue; }
         let encode_begin = Instant::now();
-        let input = match frame {
-            CachedFrame::Pixels(pixels) => {
-                if new_frame || viewer.yuv.is_empty() {
-                    scrap::scaled_to_yuv(pixels, viewer.width, viewer.height,
-                        viewer.encoder.yuvfmt(), &mut viewer.yuv, &mut viewer.mid,
-                        &mut viewer.scaled)?;
-                }
-                EncodeInput::YUV(&viewer.yuv)
+        match &mut viewer.encoder {
+            ViewerCodec::Pixels(worker) => {
+                let Some(pixels) = cache.pixels() else { continue; };
+                worker.encode(pixels.clone(), cache.generation, ms, viewer.ratio)?;
+                viewer.first_frame = false;
             }
-            #[cfg(windows)]
-            CachedFrame::Texture(texture, rotation) => EncodeInput::Texture((texture.as_ptr(), *rotation)),
-        };
+            ViewerCodec::Local(encoder) => {
+                #[cfg(windows)]
+                if let Some(CachedFrame::Texture(texture, rotation)) = &cache.frame {
+                    let input = EncodeInput::Texture((texture.as_ptr(), *rotation));
+                    let video = encode_frame(input, ms, encoder, &mut viewer.failures, &mut viewer.first_frame)?;
+                    if let Some(video) = video {
+                        if send_video_frame(display, sp, id, video, recorder, record_owner, viewer.width, viewer.height) {
+                            viewer.sent();
+                        }
+                    }
+                    let mut registry = VIDEO_QOS.lock().unwrap();
+                    let qos = registry.peer(id);
+                    qos.capture_ms = capture_ms;
+                    qos.encode_ms = encode_begin.elapsed().as_millis() as u32;
+                    qos.stream_size = (viewer.width as u32, viewer.height as u32);
+                } else {
+                    continue;
+                }
+                #[cfg(not(windows))]
+                { let _ = encoder; bail!("Texture encoding is only supported on Windows"); }
+            }
+        }
+        viewer.pacer.start(capture_started);
+        viewer.capture_ms = capture_ms;
         viewer.repeat = if new_frame { 0 } else { viewer.repeat + 1 };
         viewer.frame_generation = cache.generation;
-        let sent = handle_one_frame(display, sp, id, input, ms,
-            &mut viewer.encoder, if record_owner == Some(id) { recorder.clone() } else { Default::default() },
-            &mut viewer.failures, &mut viewer.first_frame, viewer.width, viewer.height)?;
-        let mut registry = VIDEO_QOS.lock().unwrap();
-        let qos = registry.peer(id);
-        qos.capture_ms = capture_ms;
-        qos.encode_ms = encode_begin.elapsed().as_millis() as u32;
-        qos.stream_size = (viewer.width as u32, viewer.height as u32);
-        drop(registry);
-        if !sent.is_empty() { viewer.sent(); }
+    }
+    Ok(())
+}
+
+fn drain_encoded_frames(
+    display: usize, sp: &GenericService, viewers: &mut HashMap<i32, ViewerEncoder>,
+    recorder: &Arc<Mutex<Option<Recorder>>>, record_owner: Option<i32>,
+) -> ResultType<()> {
+    for (&id, viewer) in viewers.iter_mut() {
+        let reply = match &mut viewer.encoder {
+            ViewerCodec::Pixels(worker) => worker.poll()?,
+            ViewerCodec::Local(_) => None,
+        };
+        match reply {
+            Some(PixelReply::Configured(info)) => { viewer.info = Some(info); }
+            Some(PixelReply::Encoded { video, info, elapsed_ms }) => {
+                viewer.info = Some(info);
+                if let Some(video) = video {
+                    if send_video_frame(display, sp, id, video, recorder, record_owner, viewer.width, viewer.height) {
+                        viewer.sent();
+                    }
+                }
+                let mut registry = VIDEO_QOS.lock().unwrap();
+                let qos = registry.peer(id);
+                qos.capture_ms = viewer.capture_ms;
+                qos.encode_ms = elapsed_ms;
+                qos.stream_size = (viewer.width as u32, viewer.height as u32);
+            }
+            None => {}
+        }
     }
     Ok(())
 }
@@ -546,10 +597,12 @@ fn prepare_viewers(
             (id, stream_dimensions(c.width, c.height, divisor), qos.ratio(), qos.spf(), qos.record())
         }).collect()
     };
-    let allow_texture = settings.iter().all(|s| s.1 == (c.width, c.height));
     for (id, (width, height), ratio, spf, record) in settings {
+        // A resized peer uses a pixel snapshot; native-size peers keep VRAM.
+        let allow_texture = (width, height) == (c.width, c.height);
+        if let Some(v) = viewers.get_mut(&id) { v.spf = spf; }
         // Do not append frames or reset an encoder while its previous frame is in flight.
-        if viewers.get(&id).map_or(false, |v| v.pending.is_some()) {
+        if viewers.get(&id).map_or(false, |v| v.pending.is_some() || v.busy()) {
             if let Some(v) = viewers.get_mut(&id) {
                 if v.second.elapsed() >= Duration::from_secs(1) {
                     VIDEO_QOS.lock().unwrap().peer(id).update_display_data(&name, v.count);
@@ -566,48 +619,76 @@ fn prepare_viewers(
             v.width != width || v.height != height || v.codec != Encoder::negotiated_codec()
                 || v.use_i444 != Encoder::use_i444(&v.config) || v.record != record || sp.is_option_true(&refresh)
                 || (v.input_texture() && !allow_texture)
-                || (!v.encoder.support_changing_quality() && v.ratio != ratio)
+                || (v.info.map_or(false, |i| !i.changing_quality) && v.ratio != ratio)
         });
         if reset {
             let cfg = get_encoder_config(c, name.clone(), ratio, record || record_incoming,
                 portable, source, width, height, allow_texture);
             let use_i444 = Encoder::use_i444(&cfg);
-            Encoder::set_fallback(&cfg);
-            let encoder = match Encoder::new(cfg.clone(), use_i444) {
-                Ok(e) => e,
-                Err(e) => {
-                    log::error!("Viewer {id} encoder setup failed: {e}; falling back to VP9");
-                    Encoder::set_fallback(&EncoderCfg::VPX(VpxEncoderConfig {
-                        width: width as _, height: height as _, quality: ratio,
-                        codec: VpxVideoCodecId::VP9, keyframe_interval: None,
-                    }));
-                    bail!("SWITCH");
+            // A scaled peer may need VP9 when only a texture H.26x encoder is
+            // available. That local fallback must not reset the native-size
+            // peers' negotiated codec and evict their texture encoders.
+            if allow_texture { Encoder::set_fallback(&cfg); }
+            #[cfg(feature = "vram")]
+            let texture = matches!(cfg, EncoderCfg::VRAM(_));
+            #[cfg(not(feature = "vram"))]
+            let texture = false;
+            let previous = viewers.remove(&id);
+            let (encoder, info) = if texture {
+                match Encoder::new(cfg.clone(), use_i444) {
+                    Ok(e) => {
+                        let info = EncoderInfo::new(&e);
+                        (ViewerCodec::Local(e), Some(info))
+                    }
+                    Err(e) => {
+                        log::error!("Viewer {id} encoder setup failed: {e}; falling back to VP9");
+                        Encoder::set_fallback(&EncoderCfg::VPX(VpxEncoderConfig {
+                            width: width as _, height: height as _, quality: ratio,
+                            codec: VpxVideoCodecId::VP9, keyframe_interval: None,
+                        }));
+                        bail!("SWITCH");
+                    }
                 }
+            } else {
+                let worker = if let Some(ViewerEncoder { encoder: ViewerCodec::Pixels(mut worker), .. }) = previous {
+                    worker.configure(&cfg, use_i444, width, height, ratio)?;
+                    worker
+                } else {
+                    PixelWorker::new(format!("{name}-encoder-{id}"), &cfg, use_i444, width, height, ratio)?
+                };
+                (ViewerCodec::Pixels(worker), None)
             };
-            #[cfg(target_os = "android")]
-            if source.is_monitor() {
-                if let Err(e) = check_change_scale(encoder.is_hardware()) {
-                    try_broadcast_display_changed(sp, c.current, c, true)?;
-                    bail!(e);
-                }
-            }
             viewers.insert(id, ViewerEncoder {
-                encoder, config: cfg, codec: Encoder::negotiated_codec(), use_i444, width, height, ratio, record,
-                spf, pending: None, last_sent: None, second: Instant::now(), count: 0, failures: 0,
-                first_frame: true, repeat: 0, frame_generation: 0, yuv: Vec::new(), mid: Vec::new(), scaled: Vec::new(),
+                encoder, info, config: cfg, codec: Encoder::negotiated_codec(), use_i444, width, height, ratio, record,
+                spf, pending: None, pacer: Pacer::default(), capture_ms: 0, second: Instant::now(), count: 0, failures: 0,
+                first_frame: true, repeat: 0, frame_generation: 0,
             });
             sp.set_option_bool(&refresh, false);
         }
         if let Some(v) = viewers.get_mut(&id) {
             v.spf = spf;
-            if v.ratio != ratio && v.encoder.support_changing_quality() {
-                v.encoder.set_quality(ratio)?;
+            if v.ratio != ratio && v.info.map_or(false, |i| i.changing_quality) {
+                if let ViewerCodec::Local(encoder) = &mut v.encoder {
+                    encoder.set_quality(ratio)?;
+                    v.info = Some(EncoderInfo::new(encoder));
+                }
                 v.ratio = ratio;
+            }
+            #[cfg(target_os = "android")]
+            if v.first_frame && source.is_monitor() {
+                if let Some(info) = v.info {
+                    if let Err(e) = check_change_scale(info.hardware) {
+                        try_broadcast_display_changed(sp, c.current, c, true)?;
+                        bail!(e);
+                    }
+                }
             }
             let mut registry = VIDEO_QOS.lock().unwrap();
             let qos = registry.peer(id);
-            qos.store_bitrate(v.encoder.bitrate());
-            qos.set_support_changing_quality(&name, v.encoder.support_changing_quality());
+            if let Some(info) = v.info {
+                qos.store_bitrate(info.bitrate);
+                qos.set_support_changing_quality(&name, info.changing_quality);
+            }
             if v.second.elapsed() >= Duration::from_secs(1) {
                 qos.update_display_data(&name, v.count);
                 v.count = 0;
@@ -615,7 +696,7 @@ fn prepare_viewers(
             }
         }
     }
-    *texture_mode = !viewers.is_empty() && viewers.values().all(ViewerEncoder::input_texture);
+    *texture_mode = viewers.values().any(ViewerEncoder::input_texture);
     Ok(())
 }
 
@@ -656,6 +737,7 @@ fn run_inner(vs: VideoService) -> ResultType<()> {
     let last_portable_service_running = false;
 
     let display_idx = vs.idx;
+    let _waiter = FrameWaiter::new(display_idx);
     let sp = vs.sp;
     let mut c = get_capturer(vs.source, display_idx, last_portable_service_running)?;
     #[cfg(windows)]
@@ -671,6 +753,7 @@ fn run_inner(vs: VideoService) -> ResultType<()> {
     let mut latest_frame = FrameCache::default();
     let mut capture_ms = 0;
     let mut texture_mode = false;
+    let mut capture_pacer = Pacer::default();
     sp.set_option_bool(OPTION_REFRESH, false);
 
     let start = time::Instant::now();
@@ -691,9 +774,18 @@ fn run_inner(vs: VideoService) -> ResultType<()> {
         vs.watchdog.checkpoint(Phase::Preparing);
         #[cfg(windows)]
         check_uac_switch(c.privacy_mode_id, c._capturer_privacy_mode_id)?;
+        // Removed viewers must not publish a late result or keep native cleanup
+        // on this thread. Dropping their worker closes its bounded channels.
+        viewers.retain(|id, _| sp.is_subed(*id));
+        drain_encoded_frames(display_idx, &sp, &mut viewers, &recorder, record_owner)?;
         drain_frame_acks(display_idx, &mut viewers);
+        let previous_texture_mode = texture_mode;
         prepare_viewers(&mut viewers, &sp, &c, vs.source, last_portable_service_running,
             record_incoming, &mut texture_mode)?;
+        if texture_mode != previous_texture_mode {
+            latest_frame.clear();
+            last_frame = Instant::now();
+        }
         let next_owner = viewers.keys().copied().min();
         if record_incoming && record_owner != next_owner {
             recorder = get_recorder(true, display_idx, vs.source == VideoSource::Camera);
@@ -738,14 +830,21 @@ fn run_inner(vs: VideoService) -> ResultType<()> {
             try_broadcast_display_changed(&sp, display_idx, &c, false)?;
         }
 
-        if !viewers.values().any(ViewerEncoder::ready) {
-            std::thread::sleep(Duration::from_millis(5));
+        // Wake immediately on encoding/transport completion. The upper bound
+        // keeps subscription/configuration changes responsive while idle.
+        let wait = viewers.values().filter(|v| !v.busy() && v.info.is_some() && v.pending.is_none())
+            .map(|v| v.pacer.remaining(now, v.spf)).min()
+            .unwrap_or(Duration::from_millis(100))
+            .max(capture_pacer.remaining(now, spf)).min(Duration::from_millis(100));
+        if !wait.is_zero() {
+            std::thread::park_timeout(wait);
             continue;
         }
 
         let time = now - start;
         let ms = (time.as_secs() * 1000 + time.subsec_millis() as u64) as i64;
         let capture_begin = Instant::now();
+        capture_pacer.start(capture_begin);
         vs.watchdog.checkpoint(Phase::Capturing);
         let res = match c.frame(spf) {
             Ok(frame) => {
@@ -801,8 +900,8 @@ fn run_inner(vs: VideoService) -> ResultType<()> {
 
                     latest_frame.update(&frame)?;
                     vs.watchdog.checkpoint(Phase::Encoding);
-                    send_cached_frames(display_idx, &sp, &mut viewers, &latest_frame, ms,
-                        &recorder, record_owner, capture_ms)?;
+                    send_cached_frames(display_idx, &sp, &mut viewers, &mut latest_frame, ms,
+                        &recorder, record_owner, capture_ms, capture_begin)?;
                 }
                 #[cfg(windows)]
                 {
@@ -852,8 +951,8 @@ fn run_inner(vs: VideoService) -> ResultType<()> {
                     }
                 }
                 vs.watchdog.checkpoint(Phase::Encoding);
-                send_cached_frames(display_idx, &sp, &mut viewers, &latest_frame, ms,
-                    &recorder, record_owner, capture_ms)?;
+                send_cached_frames(display_idx, &sp, &mut viewers, &mut latest_frame, ms,
+                    &recorder, record_owner, capture_ms, capture_begin)?;
             }
             Err(err) => {
                 // This check may be redundant, but it is better to be safe.
@@ -881,9 +980,6 @@ fn run_inner(vs: VideoService) -> ResultType<()> {
         let elapsed = now.elapsed();
         // may need to enable frame(timeout)
         log::trace!("{:?} {:?}", time::Instant::now(), elapsed);
-        if elapsed < spf {
-            std::thread::sleep(spf - elapsed);
-        }
     }
 
     Ok(())
@@ -1082,42 +1178,43 @@ fn check_privacy_mode_changed(
     Ok(())
 }
 
-#[inline]
-fn handle_one_frame(
+fn send_video_frame(
     display: usize,
     sp: &GenericService,
     id: i32,
-    frame: EncodeInput,
-    ms: i64,
-    encoder: &mut Encoder,
-    recorder: Arc<Mutex<Option<Recorder>>>,
-    encode_fail_counter: &mut usize,
-    first_frame: &mut bool,
+    mut vf: VideoFrame,
+    recorder: &Arc<Mutex<Option<Recorder>>>,
+    record_owner: Option<i32>,
     width: usize,
     height: usize,
-) -> ResultType<HashSet<i32>> {
-    let mut send_conn_ids: HashSet<i32> = Default::default();
+) -> bool {
+    vf.display = display as _;
+    vf.stream_width = width as _;
+    vf.stream_height = height as _;
+    let mut msg = Message::new();
+    msg.set_video_frame(vf);
+    if record_owner == Some(id) {
+        if let Some(recorder) = recorder.lock().unwrap().as_mut() {
+            recorder.write_message(&msg, width, height);
+        }
+    }
+    FRAME_PENDING.lock().unwrap().insert((id, display), Instant::now());
+    if sp.send_to(msg, id) { true } else {
+        FRAME_PENDING.lock().unwrap().remove(&(id, display));
+        false
+    }
+}
+
+fn encode_frame(
+    frame: EncodeInput, ms: i64, encoder: &mut Encoder,
+    encode_fail_counter: &mut usize, first_frame: &mut bool,
+) -> ResultType<Option<VideoFrame>> {
     let first = *first_frame;
     *first_frame = false;
     match encoder.encode_to_message(frame, ms) {
-        Ok(mut vf) => {
+        Ok(vf) => {
             *encode_fail_counter = 0;
-            vf.display = display as _;
-            vf.stream_width = width as _;
-            vf.stream_height = height as _;
-            let mut msg = Message::new();
-            msg.set_video_frame(vf);
-            recorder
-                .lock()
-                .unwrap()
-                .as_mut()
-                .map(|r| r.write_message(&msg, width, height));
-            FRAME_PENDING.lock().unwrap().insert((id, display), Instant::now());
-            if sp.send_to(msg, id) {
-                send_conn_ids.insert(id);
-            } else {
-                FRAME_PENDING.lock().unwrap().remove(&(id, display));
-            }
+            return Ok(Some(vf));
         }
         Err(e) => {
             *encode_fail_counter += 1;
@@ -1150,7 +1247,7 @@ fn handle_one_frame(
             }
         }
     }
-    Ok(send_conn_ids)
+    Ok(None)
 }
 
 #[inline]
@@ -1341,6 +1438,16 @@ fn handle_screenshot(screenshot: Screenshot, msg: String, w: usize, h: usize, da
 mod tests {
     use super::*;
 
+    fn finish_encoding(display: usize, sp: &GenericService, viewers: &mut HashMap<i32, ViewerEncoder>, recorder: &Arc<Mutex<Option<Recorder>>>) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            drain_encoded_frames(display, sp, viewers, recorder, None).unwrap();
+            if viewers.values().all(|v| !v.busy()) { break; }
+            assert!(Instant::now() < deadline, "encoder worker timed out");
+            std::thread::park_timeout(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn slow_viewer_catches_up_without_another_capture() {
         struct Pixels(Vec<u8>);
@@ -1357,12 +1464,12 @@ mod tests {
                 codec: VpxVideoCodecId::VP9, keyframe_interval: None,
             });
             ViewerEncoder {
-                encoder: Encoder::new(config.clone(), false).unwrap(), config,
+                encoder: ViewerCodec::Pixels(PixelWorker::new("cache-test-encoder".into(), &config, false, 64, 64, 0.5).unwrap()),
+                info: None, config,
                 codec: CodecFormat::VP9, use_i444: false, width: 64, height: 64,
                 ratio: 0.5, record: false, spf: Duration::ZERO,
-                pending: None, last_sent: None, second: Instant::now(), count: 0,
+                pending: None, pacer: Pacer::default(), capture_ms: 0, second: Instant::now(), count: 0,
                 failures: 0, first_frame: true, repeat: 0, frame_generation: 0,
-                yuv: vec![], mid: vec![], scaled: vec![],
             }
         }
         let display = usize::MAX - 1;
@@ -1373,10 +1480,12 @@ mod tests {
         sp.on_subscribe(ConnInner::new(-102, None, Some(slow_tx)));
         let mut viewers = HashMap::from([(-101, viewer()), (-102, viewer())]);
         let recorder = Default::default();
+        finish_encoding(display, &sp, &mut viewers, &recorder);
         let mut cache = FrameCache::default();
         let mut pixels = Pixels(vec![0; 64 * 64 * 4]);
         cache.update_pixels(&pixels);
-        send_cached_frames(display, &sp, &mut viewers, &cache, 0, &recorder, None, 0).unwrap();
+        send_cached_frames(display, &sp, &mut viewers, &mut cache, 0, &recorder, None, 0, Instant::now()).unwrap();
+        finish_encoding(display, &sp, &mut viewers, &recorder);
         fast_rx.try_recv().unwrap();
         slow_rx.try_recv().unwrap();
         // Only the fast viewer acknowledges the initial image. Subsequent
@@ -1386,7 +1495,8 @@ mod tests {
             drain_frame_acks(display, &mut viewers);
             pixels.0.fill(value);
             cache.update_pixels(&pixels);
-            send_cached_frames(display, &sp, &mut viewers, &cache, value as _, &recorder, None, 0).unwrap();
+            send_cached_frames(display, &sp, &mut viewers, &mut cache, value as _, &recorder, None, 0, Instant::now()).unwrap();
+            finish_encoding(display, &sp, &mut viewers, &recorder);
             fast_rx.try_recv().unwrap();
             assert!(slow_rx.try_recv().is_err());
         }
@@ -1397,7 +1507,8 @@ mod tests {
         notify_video_frame_fetched(display, -101, None);
         notify_video_frame_fetched(display, -102, None);
         drain_frame_acks(display, &mut viewers);
-        send_cached_frames(display, &sp, &mut viewers, &cache, 200, &recorder, None, 0).unwrap();
+        send_cached_frames(display, &sp, &mut viewers, &mut cache, 200, &recorder, None, 0, Instant::now()).unwrap();
+        finish_encoding(display, &sp, &mut viewers, &recorder);
         assert!(fast_rx.try_recv().is_err());
         let (_, msg) = slow_rx.try_recv().unwrap();
         assert!(matches!(&msg.union, Some(message::Union::VideoFrame(_))));
@@ -1407,7 +1518,9 @@ mod tests {
         // An encoder rebuilt for refresh also gets the cached image immediately.
         notify_video_frame_fetched(display, -102, None);
         viewers.insert(-102, viewer());
-        send_cached_frames(display, &sp, &mut viewers, &cache, 250, &recorder, None, 0).unwrap();
+        finish_encoding(display, &sp, &mut viewers, &recorder);
+        send_cached_frames(display, &sp, &mut viewers, &mut cache, 250, &recorder, None, 0, Instant::now()).unwrap();
+        finish_encoding(display, &sp, &mut viewers, &recorder);
         slow_rx.try_recv().unwrap();
         for id in [-101, -102] {
             notify_video_frame_fetched(display, id, None);
