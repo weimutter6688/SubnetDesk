@@ -19,6 +19,7 @@ import '../../common/widgets/peer_tab_page.dart';
 import '../../models/favorite_group_model.dart';
 import '../../models/platform_model.dart';
 import '../lan_identity_manager.dart';
+import '../widgets/quick_connect_bar.dart';
 
 class OnlineStatusWidget extends StatefulWidget {
   const OnlineStatusWidget({Key? key, this.onSvcStatusChanged})
@@ -190,7 +191,7 @@ class _ConnectionPageState extends State<ConnectionPage> with WindowListener {
     if (_idController.text.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         final lastRemoteId = await bind.mainGetLastRemoteId();
-        if (lastRemoteId != _idController.id) {
+        if (mounted && _idEditingController.text.isEmpty) {
           setState(() {
             _idController.id = lastRemoteId;
             _idEditingController.text = lastRemoteId;
@@ -424,6 +425,18 @@ class _ConnectionPageState extends State<ConnectionPage> with WindowListener {
               const SizedBox(width: 10),
               _buildViewButton(context, border),
             ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 16, 22, 0),
+          child: QuickConnectBar(
+            controller: _idEditingController,
+            addressLabel: translate('Local Address'),
+            connectLabel: translate('Connect'),
+            onConnect: (endpoint) async {
+              _idController.id = endpoint;
+              await connect(context, endpoint);
+            },
           ),
         ),
         Expanded(
@@ -753,7 +766,8 @@ class _ConnectionPageState extends State<ConnectionPage> with WindowListener {
     String? identityId,
     bool bindIdentity = false,
   }) async {
-    final endpoint = _idController.id;
+    final endpoint = _idEditingController.text.trim();
+    _idController.id = endpoint;
     final username = _usernameController.text.trim();
     final password = _passwordController.text;
     if (endpoint.isEmpty ||
