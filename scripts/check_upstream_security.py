@@ -1,6 +1,7 @@
 """Read-only upstream change/advisory report; never downloads app updates."""
 import argparse
 from datetime import datetime, timezone
+import http.client
 import json
 import os
 from pathlib import Path
@@ -31,7 +32,7 @@ def fetch(url):
                 return json.load(response)
         except urllib.error.HTTPError:
             raise
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):
             if attempt == 2:
                 raise
 
@@ -39,24 +40,27 @@ def fetch(url):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--since", help="Optional ISO date for a bounded verification run")
     args = parser.parse_args()
     baseline = json.loads((ROOT / "docs/upstream-baseline.json").read_text(encoding="utf-8"))
+    since = args.since or baseline["monitor_since_utc"]
+    datetime.fromisoformat(since.replace("Z", "+00:00"))
     repository = baseline["repository"]
     if not re.fullmatch(r"[\w-]+/[\w-]+", repository):
         raise ValueError("Invalid upstream repository")
     base_url = f"https://api.github.com/repos/{repository}"
     head = fetch(base_url + "/commits/master")["sha"]
     commits = []
-    for page in range(1, 21):
+    for page in range(1, 71):
         query = urllib.parse.urlencode({
-            "sha": head, "since": baseline["monitor_since_utc"], "per_page": 100, "page": page,
+            "sha": head, "since": since, "per_page": 30, "page": page,
         })
         batch = fetch(base_url + "/commits?" + query)
         commits.extend(batch)
-        if len(batch) < 100:
+        if len(batch) < 30:
             break
     else:
-        raise ValueError("Upstream history exceeds 2000 commits; narrow the reviewed monitoring interval")
+        raise ValueError("Upstream history exceeds 2100 commits; narrow the reviewed monitoring interval")
 
     advisory_status = ""
     try:
@@ -74,7 +78,7 @@ def main():
         "# RustDesk upstream security review queue", "",
         f"Generated: {datetime.now(timezone.utc).isoformat()}",
         f"Fork point: `{baseline['fork_point_commit']}`; observed head: `{head}`.",
-        f"Commits returned since {baseline['monitor_since_utc']}: {len(commits)}; keyword candidates: {len(candidates)}.",
+        f"Commits returned since {since}: {len(commits)}; keyword candidates: {len(candidates)}.",
         "", advisory_status, "",
         "Commit-message matching is a triage aid. Date-filtered history can miss merged commits with older author dates; review upstream advisories and the full fork-point comparison too.",
         "No change is applied automatically. The baseline is a fork point, not a claim that all later security fixes have been integrated.", "",
