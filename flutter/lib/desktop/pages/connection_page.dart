@@ -699,6 +699,8 @@ class _ConnectionPageState extends State<ConnectionPage> with WindowListener {
                   controller: _usernameController,
                   autocorrect: false,
                   enableSuggestions: false,
+                  textInputAction: TextInputAction.go,
+                  onSubmitted: (_) => connectNow(),
                   decoration: InputDecoration(
                     labelText: translate('Username'),
                     prefixIcon: const Icon(Icons.person_outline),
@@ -710,6 +712,7 @@ class _ConnectionPageState extends State<ConnectionPage> with WindowListener {
                   obscureText: true,
                   autocorrect: false,
                   enableSuggestions: false,
+                  textInputAction: TextInputAction.go,
                   decoration: InputDecoration(
                     labelText: translate('Password'),
                     prefixIcon: const Icon(Icons.lock_outline),

@@ -44,6 +44,8 @@ class DialogTextField extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode? focusNode;
   final TextInputType? keyboardType;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
   final List<TextInputFormatter>? inputFormatters;
   final int? maxLength;
 
@@ -62,6 +64,8 @@ class DialogTextField extends StatelessWidget {
     this.suffixIcon,
     this.hintText,
     this.keyboardType,
+    this.textInputAction,
+    this.onSubmitted,
     this.inputFormatters,
     this.maxLength,
     required this.title,
@@ -89,6 +93,8 @@ class DialogTextField extends StatelessWidget {
                 autofocus: true,
                 obscureText: obscureText,
                 keyboardType: keyboardType,
+                textInputAction: textInputAction,
+                onSubmitted: onSubmitted,
                 inputFormatters: inputFormatters,
                 maxLength: maxLength,
               ),
@@ -122,6 +128,8 @@ class PasswordWidget extends StatefulWidget {
     this.errorText,
     this.title,
     this.maxLength,
+    this.textInputAction,
+    this.onSubmitted,
   }) : super(key: key);
 
   final TextEditingController controller;
@@ -131,6 +139,8 @@ class PasswordWidget extends StatefulWidget {
   final String? errorText;
   final String? title;
   final int? maxLength;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
 
   @override
   State<PasswordWidget> createState() => _PasswordWidgetState();
@@ -199,6 +209,8 @@ class _PasswordWidgetState extends State<PasswordWidget> {
       errorText: widget.errorText,
       focusNode: _focusNode,
       maxLength: widget.maxLength,
+      textInputAction: widget.textInputAction,
+      onSubmitted: widget.onSubmitted,
     );
   }
 }
@@ -412,6 +424,8 @@ _connectDialog(
             controller: osUsernameController,
             prefixIcon: DialogTextField.kUsernameIcon,
             errorText: null,
+            textInputAction: TextInputAction.go,
+            onSubmitted: (_) => submit(),
           ),
           if (errUsername.value.isNotEmpty)
             Align(
@@ -429,6 +443,8 @@ _connectDialog(
             controller: osPasswordController,
             autoFocus: false,
             errorText: errPassword.isEmpty ? null : errPassword.value,
+            textInputAction: TextInputAction.go,
+            onSubmitted: (_) => submit(),
           ),
         ],
       );
@@ -444,6 +460,8 @@ _connectDialog(
           PasswordWidget(
             controller: passwordController,
             autoFocus: osUsernameController == null,
+            textInputAction: TextInputAction.go,
+            onSubmitted: (_) => submit(),
           ),
         ],
       );
