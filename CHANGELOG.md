@@ -2,6 +2,18 @@
 
 All notable SubnetDesk changes are documented in this file.
 
+## [1.3.0.84] - 2026-10-10
+
+- Vendored the common library and recorded its provenance and RustDesk fork point.
+- Isolated runtime, service, installer, data and keyring identities while retaining the SubnetDesk display name; LAN v3 requires both endpoints to update.
+- Removed legacy SHA-256 permanent-password APIs and upstream custom-client signing trust. Automatic updates remain removed.
+- Made discovery opt-in and defaulted Web permissions to view-only; the Web gateway remains disabled by default.
+- Added verified build downloads, scoped Rust formatting/Clippy gates and read-only upstream security monitoring.
+- Fixed recursive input error formatting and uninitialized Windows capture/display outputs.
+- Includes the earlier Enter-to-connect, reconnection, network/video and Windows RDP-session transition fixes.
+
+Earlier entries below describe the original fork's historical releases, including update functionality that has since been removed.
+
 ## [1.3.0] - 2026-08-27
 
 ### Added

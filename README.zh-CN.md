@@ -13,11 +13,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/zibo-chen/SubnetDesk/releases/latest"><img src="https://img.shields.io/github/v/release/zibo-chen/SubnetDesk?style=flat-square&logo=github&color=2563eb" alt="最新版本"></a>
-  <a href="https://github.com/zibo-chen/SubnetDesk/releases"><img src="https://img.shields.io/github/downloads/zibo-chen/SubnetDesk/total?style=flat-square&logo=github&color=0ea5e9" alt="累计下载量"></a>
-  <a href="https://github.com/zibo-chen/SubnetDesk/stargazers"><img src="https://img.shields.io/github/stars/zibo-chen/SubnetDesk?style=flat-square&logo=github&color=f59e0b" alt="GitHub Stars"></a>
-  <a href="https://github.com/zibo-chen/SubnetDesk/network/members"><img src="https://img.shields.io/github/forks/zibo-chen/SubnetDesk?style=flat-square&logo=github" alt="GitHub Forks"></a>
-  <a href="https://github.com/zibo-chen/SubnetDesk/actions/workflows/subnetdesk-preflight.yml"><img src="https://img.shields.io/github/actions/workflow/status/zibo-chen/SubnetDesk/subnetdesk-preflight.yml?branch=master&style=flat-square&label=build" alt="构建状态"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/releases/latest"><img src="https://img.shields.io/github/v/release/zibo-chen/SubnetDesk?style=flat-square&logo=github&color=2563eb" alt="最新版本"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/releases"><img src="https://img.shields.io/github/downloads/zibo-chen/SubnetDesk/total?style=flat-square&logo=github&color=0ea5e9" alt="累计下载量"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/stargazers"><img src="https://img.shields.io/github/stars/zibo-chen/SubnetDesk?style=flat-square&logo=github&color=f59e0b" alt="GitHub Stars"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/network/members"><img src="https://img.shields.io/github/forks/zibo-chen/SubnetDesk?style=flat-square&logo=github" alt="GitHub Forks"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/actions/workflows/subnetdesk-preflight.yml"><img src="https://img.shields.io/github/actions/workflow/status/zibo-chen/SubnetDesk/subnetdesk-preflight.yml?branch=master&style=flat-square&label=build" alt="构建状态"></a>
   <a href="LICENCE"><img src="https://img.shields.io/github/license/zibo-chen/SubnetDesk?style=flat-square&color=16a34a" alt="开源许可"></a>
 </p>
 
@@ -48,14 +48,14 @@
 
 ## 💡 为什么选择 SubnetDesk
 
-SubnetDesk 专注于一个明确场景：让本身已经网络互通的设备直接进行远程控制。项目移除了 RustDesk 中的公网设备 ID、信令、中继、云账号、代理和公网自动更新等路径，改为直接连接目标地址，并自动发现局域网设备。
+SubnetDesk 专注于一个明确场景：让本身已经网络互通的设备直接进行远程控制。项目移除了 RustDesk 中的公网设备 ID、信令、中继、云账号、代理和公网自动更新等路径，改为直接连接目标地址，并提供可选的局域网设备发现（默认关闭）。
 
 它适合家庭实验室、办公室、教室、现场运维，以及通过 WireGuard、Tailscale、OpenVPN 等 VPN 互通的私有网络。
 
 | | SubnetDesk | 典型 RustDesk 部署 |
 | --- | --- | --- |
 | 连接方式 | 直接连接 IP 地址或主机名 | 通过设备 ID 和信令服务连接，可使用中继 |
-| 设备发现 | 局域网 mDNS 自动发现 | 设备 ID 或地址簿 |
+| 设备发现 | 可选 mDNS，默认关闭 | 设备 ID 或地址簿 |
 | 服务依赖 | 无需协调服务器 | 设备 ID 连接通常需要公网或自建信令/中继服务 |
 | 适用场景 | 局域网、可路由私网、VPN | 互联网和跨 NAT 访问 |
 
@@ -68,7 +68,7 @@ SubnetDesk 专注于一个明确场景：让本身已经网络互通的设备直
 
 | | 功能 | 说明 |
 | --- | --- | --- |
-| 🔎 | 局域网发现 | 通过 mDNS 自动发现附近设备。 |
+| 🔎 | 局域网发现 | 在可信网络手动开启 mDNS；关闭时仅手动输入地址直连。 |
 | ⚡ | 快捷连接 | 在桌面端地址栏输入 IP 地址或主机名，按回车连接，TCP 端口可配置。 |
 | 🔐 | 访问认证 | 使用用户名和密码保护访问，密码以 Argon2id 哈希保存。 |
 | 🔑 | 复用账户 | 保存账户配置，设置默认账户，或为设备绑定专用账户。 |
@@ -84,7 +84,7 @@ SubnetDesk 专注于一个明确场景：让本身已经网络互通的设备直
 
 ## 📦 下载安装
 
-稳定版本请前往 **[GitHub Releases](https://github.com/zibo-chen/SubnetDesk/releases/latest)** 下载。希望体验最新改动时，可以使用 **[Nightly 版本](https://github.com/zibo-chen/SubnetDesk/releases/tag/nightly)** 或 **[GitHub Actions](https://github.com/zibo-chen/SubnetDesk/actions)** 中的构建产物。
+稳定版本请前往 **[GitHub Releases](https://github.com/weimutter6688/SubnetDesk/releases/latest)** 下载。希望体验最新改动时，可以使用 **[Nightly 版本](https://github.com/weimutter6688/SubnetDesk/releases/tag/nightly)** 或 **[GitHub Actions](https://github.com/weimutter6688/SubnetDesk/actions)** 中的构建产物。
 
 | 平台 | 架构 | 安装包 |
 | --- | --- | --- |
@@ -103,7 +103,7 @@ Windows 分发包也可能提供便携版 `.zip`。请完整解压后运行 `Sub
 ## 🚀 快速开始
 
 1. 在两台设备上安装并打开 SubnetDesk。
-2. 未配置过访问账号的被控端会初始化默认用户名 `subnetrust`、密码 `subnet@local`，默认监听端口为 `21118`。可在 **LAN 设置** 中修改账号密码和局域网发现选项。
+2. 未配置过访问账号的被控端会初始化默认用户名 `subnetrust`、密码 `subnet@local`，默认监听端口为 `21118`。请在 **LAN 设置** 中修改账号密码。发现功能默认关闭，需要广播和扫描时再手动开启。
 3. 在控制端选择已发现的设备，或在桌面端地址栏输入主机名/IP 地址（可附带 `:端口`），按 **回车** 发起连接。
 4. 首次连接时核对设备指纹。出现登录提示后，选择已保存的账户，或输入被控端的用户名和密码，再按 **回车** 连接。使用 **Tab** 切换用户名和密码输入框后，回车同样可以提交。
 
@@ -134,11 +134,21 @@ Windows 分发包也可能提供便携版 `.zip`。请完整解压后运行 `Sub
 - 设备指纹采用首次使用信任机制，可帮助识别目标设备身份的异常变化。
 - CIDR 白名单可限制被控端接受连接的来源网络。
 
-当前传输使用 LAN 协议 **v2**，按方向区分加密 nonce，并在登录后继续加密
-端口转发和 RDP 隧道的数据。**控制端与被控端必须一起更新**；旧版 v1 连接
-会被拒绝，不会降级。更新被控端后，请重新加载浏览器客户端。已有账号、设备
-指纹和网络规则的配置格式保持兼容。远端头像 URL 不再自动触发 HTTP 请求。
-域名用途、实际连接入口、修复和审查范围见[网络与安全审查报告](docs/security-network-review.md)。
+当前传输使用 LAN 协议 **v3**，握手签名包含本 fork 的独立前缀，按方向区分
+加密 nonce，端口转发和 RDP 隧道在登录后仍保持加密。**控制端与被控端必须一起
+更新**；旧 v1/v2 连接会被拒绝，不会降级。更新主机后请重新加载浏览器页面。
+
+产品显示名仍为 SubnetDesk，可执行文件、服务、数据目录、钥匙串和安装器身份已与
+RustDesk／原版 SubnetDesk 隔离。**需要重新配置账号并核对新设备指纹**，不会自动
+导入另一份安装的数据。详情见[命名隔离与兼容性](docs/fork-identity.md)。
+
+发现功能默认关闭；关闭时不广播设备信息，也不扫描，只保留手动地址连接。
+开启后会向本地网络发布设备名、系统和指纹。Web 网关仍默认关闭，默认或未知的
+权限档位按只读处理。在共享网络启用访问前，请修改文档中的出厂账号密码。
+
+旧单轮 SHA-256 固定密码认证和原作者自定义配置签名信任已移除。完整清单与范围见
+[fork 安全复查](docs/fork-security-review.md)、[构建输入校验](docs/build-inputs.md)、
+[Rust 质量门](docs/rust-quality-gates.md)和[上游安全跟踪](docs/upstream-baseline.md)。
 
 与其他远程控制软件一样，请只向可信网络开放监听端口，使用高强度且不重复的密码，并尽可能通过另一条可信渠道核对设备指纹。
 
@@ -209,7 +219,7 @@ cd SubnetDesk
 
 ## 🤝 参与贡献
 
-欢迎提交缺陷报告、功能建议和 Pull Request。开始修改前建议先查看现有 [Issues](https://github.com/zibo-chen/SubnetDesk/issues)，并尽量让改动保持聚焦，符合项目面向局域网与 VPN 的产品定位。
+欢迎提交缺陷报告、功能建议和 Pull Request。开始修改前建议先查看现有 [Issues](https://github.com/weimutter6688/SubnetDesk/issues)，并尽量让改动保持聚焦，符合项目面向局域网与 VPN 的产品定位。
 
 ## 💬 交流社区
 

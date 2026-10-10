@@ -13,11 +13,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/zibo-chen/SubnetDesk/releases/latest"><img src="https://img.shields.io/github/v/release/zibo-chen/SubnetDesk?style=flat-square&logo=github&color=2563eb" alt="Latest release"></a>
-  <a href="https://github.com/zibo-chen/SubnetDesk/releases"><img src="https://img.shields.io/github/downloads/zibo-chen/SubnetDesk/total?style=flat-square&logo=github&color=0ea5e9" alt="Total downloads"></a>
-  <a href="https://github.com/zibo-chen/SubnetDesk/stargazers"><img src="https://img.shields.io/github/stars/zibo-chen/SubnetDesk?style=flat-square&logo=github&color=f59e0b" alt="GitHub stars"></a>
-  <a href="https://github.com/zibo-chen/SubnetDesk/network/members"><img src="https://img.shields.io/github/forks/zibo-chen/SubnetDesk?style=flat-square&logo=github" alt="GitHub forks"></a>
-  <a href="https://github.com/zibo-chen/SubnetDesk/actions/workflows/subnetdesk-preflight.yml"><img src="https://img.shields.io/github/actions/workflow/status/zibo-chen/SubnetDesk/subnetdesk-preflight.yml?branch=master&style=flat-square&label=build" alt="Build status"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/releases/latest"><img src="https://img.shields.io/github/v/release/zibo-chen/SubnetDesk?style=flat-square&logo=github&color=2563eb" alt="Latest release"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/releases"><img src="https://img.shields.io/github/downloads/zibo-chen/SubnetDesk/total?style=flat-square&logo=github&color=0ea5e9" alt="Total downloads"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/stargazers"><img src="https://img.shields.io/github/stars/zibo-chen/SubnetDesk?style=flat-square&logo=github&color=f59e0b" alt="GitHub stars"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/network/members"><img src="https://img.shields.io/github/forks/zibo-chen/SubnetDesk?style=flat-square&logo=github" alt="GitHub forks"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/actions/workflows/subnetdesk-preflight.yml"><img src="https://img.shields.io/github/actions/workflow/status/zibo-chen/SubnetDesk/subnetdesk-preflight.yml?branch=master&style=flat-square&label=build" alt="Build status"></a>
   <a href="LICENCE"><img src="https://img.shields.io/github/license/zibo-chen/SubnetDesk?style=flat-square&color=16a34a" alt="License"></a>
 </p>
 
@@ -55,7 +55,7 @@ That makes it a good fit for home labs, offices, classrooms, on-site support, an
 | | SubnetDesk | Typical RustDesk deployment |
 | --- | --- | --- |
 | Connection | Direct IP address or hostname | Device ID through rendezvous, with optional relay |
-| Discovery | Automatic mDNS discovery on the LAN | Device ID or address book |
+| Discovery | Optional mDNS; disabled by default | Device ID or address book |
 | Server dependency | No coordination server required | Public or self-hosted rendezvous/relay server |
 | Best suited for | LANs, routed private networks, and VPNs | Internet and cross-NAT access |
 
@@ -68,7 +68,7 @@ That makes it a good fit for home labs, offices, classrooms, on-site support, an
 
 | | Capability | Details |
 | --- | --- | --- |
-| 🔎 | Local discovery | Find nearby devices automatically over mDNS. |
+| 🔎 | Local discovery | Opt in to mDNS discovery on trusted networks; manual address entry works with discovery off. |
 | ⚡ | Quick connections | Enter an IP address or hostname in the desktop address bar and press Enter; the TCP port is configurable. |
 | 🔐 | Access protection | Authenticate with a username and password; passwords are stored as Argon2id hashes. |
 | 🔑 | Reusable accounts | Save account profiles, choose a default, or bind a profile to a device. |
@@ -84,7 +84,7 @@ That makes it a good fit for home labs, offices, classrooms, on-site support, an
 
 ## 📦 Download
 
-Download stable packages from **[GitHub Releases](https://github.com/zibo-chen/SubnetDesk/releases/latest)**. For the newest changes, use the **[nightly release](https://github.com/zibo-chen/SubnetDesk/releases/tag/nightly)** or artifacts from **[GitHub Actions](https://github.com/zibo-chen/SubnetDesk/actions)**.
+Download stable packages from **[GitHub Releases](https://github.com/weimutter6688/SubnetDesk/releases/latest)**. For the newest changes, use the **[nightly release](https://github.com/weimutter6688/SubnetDesk/releases/tag/nightly)** or artifacts from **[GitHub Actions](https://github.com/weimutter6688/SubnetDesk/actions)**.
 
 | Platform | Architectures | Packages |
 | --- | --- | --- |
@@ -103,7 +103,7 @@ Windows distributions may also include a portable `.zip`. Extract the entire fol
 ## 🚀 Quick start
 
 1. Install and open SubnetDesk on both devices.
-2. A controlled device with no previously configured access account initializes username `subnetrust` and password `subnet@local`, listening on port `21118` by default. Change credentials and LAN discovery options in **LAN settings**.
+2. A controlled device with no previously configured access account initializes username `subnetrust` and password `subnet@local`, listening on port `21118` by default. Change credentials in **LAN settings**. Discovery defaults off; enable it only when you want local device advertisements and scanning.
 3. On the controller, select a discovered device, or enter a hostname/IP address (optionally with `:port`) in the desktop address bar and press **Enter**.
 4. Verify the device fingerprint on first connection. When prompted, select an account profile or enter the controlled device's username and password, then press **Enter** to connect. Enter also submits from the username/password fields after switching between them with **Tab**.
 
@@ -134,14 +134,28 @@ Successful connections appear in recent devices independently of **Remember pass
 - Device fingerprints provide trust-on-first-use verification and help detect an unexpected endpoint identity change.
 - CIDR allowlists let the controlled device limit which source networks may connect.
 
-The current transport uses LAN protocol **v2**, which separates encryption nonces
-by direction and keeps port-forwarding/RDP tunnel traffic encrypted after login.
-Update **both endpoints** together; protocol v1 peers are rejected without a
-downgrade. Reload the browser client after updating the host. Existing accounts,
-device fingerprints, and network rules retain their configuration formats.
-Peer avatar URLs no longer trigger automatic HTTP requests. See the
-[network and security review](docs/security-network-review.md) for findings,
-runtime destinations, validation, and review limits.
+The current transport uses LAN protocol **v3**, with a fork-specific signed
+handshake and directional encryption nonces. Port-forwarding/RDP tunnel traffic
+remains encrypted after login. Update **both endpoints** together; v1/v2 peers
+are rejected without a downgrade. Reload browser tabs after updating the host.
+
+The visible name remains SubnetDesk, while this fork's executable, service,
+configuration directories, keyring and installer identities are isolated from
+RustDesk and the original SubnetDesk. **Configure credentials again and verify
+the new device fingerprint**; another installation's data is not automatically
+imported. See [fork identity and compatibility](docs/fork-identity.md).
+
+Discovery is disabled by default. With discovery off, the app neither advertises
+device metadata nor scans for peers; connect by manually entered address.
+Enabling discovery publishes device name, OS and fingerprint on the local
+network. The Web gateway is also disabled by default; its default/unknown
+permission profile is view-only. Change the documented factory credentials
+before enabling access on a shared network.
+
+Legacy single-round SHA-256 password authentication and the upstream author's
+custom-client signing trust are removed. See the [fork checklist review](docs/fork-security-review.md),
+[verified build inputs](docs/build-inputs.md), [Rust quality gates](docs/rust-quality-gates.md)
+and [upstream security tracking](docs/upstream-baseline.md).
 
 As with any remote-control software, expose the listening port only to trusted networks, use a strong unique password, and verify fingerprints through a separate trusted channel when possible.
 
@@ -224,7 +238,7 @@ The build requires Rust, Flutter, and platform-specific native dependencies. The
 
 ## 🤝 Contributing
 
-Bug reports, feature ideas, and pull requests are welcome. Before opening a change, check the existing [issues](https://github.com/zibo-chen/SubnetDesk/issues) and keep changes focused on the LAN/VPN-first product scope.
+Bug reports, feature ideas, and pull requests are welcome. Before opening a change, check the existing [issues](https://github.com/weimutter6688/SubnetDesk/issues) and keep changes focused on the LAN/VPN-first product scope.
 
 ## 💬 Community
 

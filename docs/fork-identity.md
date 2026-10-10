@@ -22,6 +22,10 @@ upgrade or remove an existing RustDesk/original SubnetDesk MSI. Shortcuts and
 installation entries use independent internal paths; the app window still shows
 SubnetDesk.
 
+If both host services run on the same machine, configure different LAN/Web
+listening ports; isolated names do not let two services bind the same address
+and port.
+
 **Update both endpoints together.** LAN protocol v3 rejects previous v1/v2
 clients. The embedded browser client uses the same v3 handshake. There is no
 downgrade fallback or shared discovery namespace.
