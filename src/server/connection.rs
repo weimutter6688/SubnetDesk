@@ -427,6 +427,22 @@ const H1: Duration = Duration::from_secs(3600);
 const MILLI1: Duration = Duration::from_millis(1);
 const SEND_TIMEOUT_VIDEO: u64 = 12_000;
 const SEND_TIMEOUT_OTHER: u64 = SEND_TIMEOUT_VIDEO * 10;
+
+async fn queue_outgoing(
+    stream: &mut Stream,
+    pending: &mut Option<(Instant, Option<usize>)>,
+    message: &Message,
+    queued_at: Instant,
+) -> ResultType<()> {
+    if pending.is_some() { bail!("An outgoing message is still in flight"); }
+    stream.queue_message(message).await?;
+    let display = match &message.union {
+        Some(message::Union::VideoFrame(frame)) => Some(frame.display as usize),
+        _ => None,
+    };
+    *pending = Some((queued_at, display));
+    Ok(())
+}
 const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Whether the DRM backend can serve a Wayland login screen here.
@@ -568,17 +584,19 @@ impl Connection {
             crate::rustdesk_interval(time::interval_at(Instant::now(), TEST_DELAY_TIMEOUT));
         let mut last_recv_time = Instant::now();
 
-        conn.stream.set_send_timeout(
+        let send_timeout =
             if conn.file_transfer.is_some() || conn.port_forward_socket.is_some() || conn.terminal {
                 SEND_TIMEOUT_OTHER
             } else {
                 SEND_TIMEOUT_VIDEO
-            },
-        );
+            };
+        conn.stream.set_send_timeout(send_timeout);
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         std::thread::spawn(move || Self::handle_input(_rx_input, tx_cloned));
-        let mut pending_video: Option<(Instant, Option<usize>)> = None;
+        // Both video and ordinary messages must flush alongside incoming input.
+        // The display is set only for video, so other messages cannot ACK it.
+        let mut pending_send: Option<(Instant, Option<usize>)> = None;
         let mut second_timer = crate::rustdesk_interval(time::interval(Duration::from_secs(1)));
 
         #[cfg(feature = "unix-file-copy-paste")]
@@ -635,7 +653,10 @@ impl Connection {
                             conn.chat_unanswered = false;
                         }
                         ipc::Data::RawMessage(bytes) => {
-                            allow_err!(conn.stream.send_raw(bytes).await);
+                            match Message::parse_from_bytes(&bytes) {
+                                Ok(message) => conn.inner.send(Arc::new(message)),
+                                Err(error) => log::error!("Invalid outgoing CM message: {error}"),
+                            }
                         }
                         #[cfg(target_os = "windows")]
                         ipc::Data::ClipboardFile(clip) => {
@@ -655,7 +676,7 @@ impl Connection {
                                     );
                                 }
                                 _ => {
-                                    allow_err!(conn.stream.send(&clip_2_msg(clip)).await);
+                                    conn.inner.send(Arc::new(clip_2_msg(clip)));
                                 }
                             }
                         }
@@ -731,7 +752,7 @@ impl Connection {
                         _ => {}
                     }
                 },
-                event = conn.stream.next_or_flush(pending_video.is_some()) => {
+                event = conn.stream.next_or_flush(pending_send.is_some()) => {
                     let res = match event {
                         hbb_common::tcp::StreamEvent::Received(res) => res,
                         hbb_common::tcp::StreamEvent::Flushed(result) => {
@@ -739,7 +760,7 @@ impl Connection {
                                 conn.on_close(&err.to_string(), false).await;
                                 break;
                             }
-                            if let Some((instant, Some(display))) = pending_video.take() {
+                            if let Some((instant, Some(display))) = pending_send.take() {
                                 if !conn.video_ack_required {
                                     video_service::notify_video_frame_fetched(display, id, Some(instant.into()));
                                 }
@@ -775,7 +796,7 @@ impl Connection {
                         break;
                     }
                 },
-                _ = conn.file_timer.tick(), if pending_video.is_none() => {
+                _ = conn.file_timer.tick(), if pending_send.is_none() => {
                     if !conn.read_jobs.is_empty() {
                         conn.send_to_cm(ipc::Data::FileTransferLog(("transfer".to_string(), fs::serialize_transfer_jobs(&conn.read_jobs))));
                         let Some(limit) = crate::traffic::file_allowance(&format!("in:{}", conn.ip)) else { continue; };
@@ -794,17 +815,13 @@ impl Connection {
                         conn.file_timer = crate::rustdesk_interval(time::interval_at(Instant::now() + SEC30, SEC30));
                     }
                 }
-                Some((instant, value)) = rx_video.recv(), if pending_video.is_none() => {
-                    if let Err(err) = conn.stream.queue_message(&value as &Message).await {
+                Some((instant, value)) = rx_video.recv(), if pending_send.is_none() => {
+                    if let Err(err) = queue_outgoing(&mut conn.stream, &mut pending_send, &value, instant).await {
                         conn.on_close(&err.to_string(), false).await;
                         break;
                     }
-                    let display = if let Some(message::Union::VideoFrame(vf)) = &value.union {
-                        Some(vf.display as usize)
-                    } else { None };
-                    pending_video = Some((instant, display));
                 },
-                Some((instant, value)) = rx.recv(), if pending_video.is_none() => {
+                Some((instant, value)) = rx.recv(), if pending_send.is_none() => {
                     let latency = instant.elapsed().as_millis() as i64;
                     #[allow(unused_mut)]
                     let mut msg = value;
@@ -849,7 +866,7 @@ impl Connection {
                         Some(message::Union::MultiClipboards(_multi_clipboards)) => {
                             #[cfg(not(target_os = "ios"))]
                             if let Some(msg_out) = crate::clipboard::get_msg_if_not_support_multi_clip(&conn.lr.version, &conn.lr.my_platform, _multi_clipboards) {
-                                if let Err(err) = conn.stream.send(&msg_out).await {
+                                if let Err(err) = queue_outgoing(&mut conn.stream, &mut pending_send, &msg_out, Instant::now()).await {
                                     conn.on_close(&err.to_string(), false).await;
                                     break;
                                 }
@@ -860,14 +877,14 @@ impl Connection {
                     }
 
                     let msg: &Message = &msg;
-                    if let Err(err) = conn.stream.send(msg).await {
+                    if let Err(err) = queue_outgoing(&mut conn.stream, &mut pending_send, msg, Instant::now()).await {
                         conn.on_close(&err.to_string(), false).await;
                         break;
                     }
                 },
                 _ = second_timer.tick() => {
-                    if pending_video.as_ref().map_or(false, |(t, _)| t.elapsed().as_millis() >= SEND_TIMEOUT_VIDEO as u128) {
-                        conn.on_close("Video send timeout", true).await;
+                    if pending_send.as_ref().map_or(false, |(t, _)| t.elapsed().as_millis() >= send_timeout as u128) {
+                        conn.on_close("Message send timeout", true).await;
                         break;
                     }
                     if conn.is_authed_remote_conn() {
@@ -902,7 +919,7 @@ impl Connection {
                         break;
                     }
                     // The control end will jump out of the loop after receiving LoginResponse and will not reply to the TestDelay
-                    if pending_video.is_none() && conn.last_test_delay.is_none() && !(conn.port_forward_socket.is_some() && conn.authorized) {
+                    if pending_send.is_none() && conn.last_test_delay.is_none() && !(conn.port_forward_socket.is_some() && conn.authorized) {
                         conn.last_test_delay = Some(Instant::now());
                         let mut msg_out = Message::new();
                         msg_out.set_test_delay(TestDelay{
@@ -912,7 +929,7 @@ impl Connection {
                         conn.send(msg_out.into()).await;
                     }
                     if conn.is_authed_remote_conn() || conn.view_camera {
-                        if let Some((instant, _)) = pending_video.as_ref() {
+                        if let Some((instant, _)) = pending_send.as_ref() {
                             video_service::VIDEO_QOS.lock().unwrap().user_delay_response_elapsed(id, instant.elapsed().as_millis());
                         }
                         if let Some(last_test_delay) = conn.last_test_delay {
@@ -4278,6 +4295,17 @@ impl Connection {
 
     #[inline]
     async fn send(&mut self, msg: Message) {
+        let must_flush = match &msg.union {
+            Some(message::Union::LoginResponse(_)) => true,
+            Some(message::Union::Misc(misc)) => matches!(&misc.union, Some(misc::Union::CloseReason(_))),
+            _ => false,
+        };
+        if self.authorized && self.is_remote() && !must_flush {
+            // Responses generated while receiving input must not wait for a
+            // previous clipboard/video message to finish flushing either.
+            self.inner.send(Arc::new(msg));
+            return;
+        }
         allow_err!(self.stream.send(&msg).await);
     }
 
@@ -4849,12 +4877,7 @@ impl Connection {
             {
                 // If one way file transfer is enabled, don't send clipboard file to client
             } else {
-                // Maybe we should end the connection, because copy&paste files causes everything to wait.
-                allow_err!(
-                    self.stream
-                        .send(&crate::clipboard_file::clip_2_msg(clip))
-                        .await
-                );
+                self.inner.send(Arc::new(crate::clipboard_file::clip_2_msg(clip)));
             }
         }
     }
@@ -5704,6 +5727,52 @@ mod raii {
 mod test {
     #[allow(unused)]
     use super::*;
+
+    #[tokio::test]
+    async fn clipboard_backpressure_preserves_input_encryption_and_video_ack_scope() {
+        use hbb_common::tcp::{FramedStream, StreamEvent};
+        tokio::time::timeout(Duration::from_secs(5), async {
+            for multi in [false, true] {
+                let (a, b) = tokio::io::duplex(64);
+                let address = "127.0.0.1:21118".parse().unwrap();
+                let mut server = Stream::from_framed(FramedStream::from(a, address));
+                let mut client = FramedStream::from(b, address);
+                let key = hbb_common::sodiumoxide::crypto::secretbox::Key([9; 32]);
+                server.set_key(key.clone());
+                client.set_key(key);
+                let clipboard = Clipboard { content: vec![17; 65536].into(), ..Default::default() };
+                let mut message = Message::new();
+                if multi {
+                    message.set_multi_clipboards(MultiClipboards { clipboards: vec![clipboard], ..Default::default() });
+                } else {
+                    message.set_clipboard(clipboard);
+                }
+                let mut pending = None;
+                queue_outgoing(&mut server, &mut pending, &message, Instant::now()).await.unwrap();
+                assert!(pending.as_ref().unwrap().1.is_none(), "clipboard cannot acknowledge video");
+                // Reject a second frame before touching the encryption sequence.
+                assert!(queue_outgoing(&mut server, &mut pending, &message, Instant::now()).await.is_err());
+                let mut input = Message::new();
+                input.set_mouse_event(MouseEvent { x: 11, y: 13, ..Default::default() });
+                client.send(&input).await.unwrap();
+                match server.next_or_flush(pending.is_some()).await {
+                    StreamEvent::Received(Some(Ok(bytes))) => assert_eq!(Message::parse_from_bytes(&bytes).unwrap(), input),
+                    _ => panic!("input must arrive while the clipboard send is blocked"),
+                }
+                let (flushed, received) = tokio::join!(server.next_or_flush(true), client.next());
+                assert!(matches!(flushed, StreamEvent::Flushed(Ok(()))));
+                assert_eq!(Message::parse_from_bytes(&received.unwrap().unwrap()).unwrap(), message);
+                pending.take();
+                let mut video = Message::new();
+                video.set_video_frame(VideoFrame { display: 7, ..Default::default() });
+                queue_outgoing(&mut server, &mut pending, &video, Instant::now()).await.unwrap();
+                assert_eq!(pending.as_ref().unwrap().1, Some(7));
+                let (flushed, received) = tokio::join!(server.next_or_flush(true), client.next());
+                assert!(matches!(flushed, StreamEvent::Flushed(Ok(()))));
+                assert_eq!(Message::parse_from_bytes(&received.unwrap().unwrap()).unwrap(), video);
+            }
+        }).await.unwrap();
+    }
 
     #[cfg(target_os = "macos")]
     #[test]
