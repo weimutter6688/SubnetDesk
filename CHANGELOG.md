@@ -2,6 +2,13 @@
 
 All notable SubnetDesk changes are documented in this file.
 
+## [1.3.0.85] - 2026-10-10
+
+- Use SubnetDesk consistently for executable, service, configuration and package names; remove the GitHub username from runtime identities.
+- Use product-owned application/keyring namespaces, discovery and signed handshake names; update both endpoints to .85.
+- Restore the SubnetDesk MSI upgrade identity so existing SubnetDesk installations can be upgraded.
+- Retain the .84 security fixes and rebuild Windows installer and portable packages under the SubnetDesk name.
+
 ## [1.3.0.84] - 2026-10-10
 
 - Vendored the common library and recorded its provenance and RustDesk fork point.

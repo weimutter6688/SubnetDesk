@@ -139,11 +139,14 @@ handshake and directional encryption nonces. Port-forwarding/RDP tunnel traffic
 remains encrypted after login. Update **both endpoints** together; v1/v2 peers
 are rejected without a downgrade. Reload browser tabs after updating the host.
 
-The visible name remains SubnetDesk, while this fork's executable, service,
-configuration directories, keyring and installer identities are isolated from
-RustDesk and the original SubnetDesk. **Configure credentials again and verify
-the new device fingerprint**; another installation's data is not automatically
-imported. See [fork identity and compatibility](docs/fork-identity.md).
+The executable and internal identities use SubnetDesk without a GitHub username.
+Windows runs `SubnetDesk.exe`; the service, installation and configuration
+directories also use SubnetDesk, separate from RustDesk. The MSI retains the
+SubnetDesk upgrade identity and can upgrade an existing SubnetDesk installation.
+Keyring entries use the product namespace; verify the device fingerprint on
+first connection. Update both endpoints to .85 and reload browser tabs. Data
+from .84's temporary naming is not migrated automatically. See
+[identity and compatibility](docs/fork-identity.md).
 
 Discovery is disabled by default. With discovery off, the app neither advertises
 device metadata nor scans for peers; connect by manually entered address.
