@@ -1063,7 +1063,9 @@ pub fn main_get_fav() -> Vec<String> {
 }
 
 pub fn main_store_fav(favs: Vec<String>) {
-    store_fav(favs)
+    store_fav(favs);
+    main_load_recent_peers();
+    main_load_fav_peers();
 }
 
 pub fn main_get_peer_sync(id: String) -> SyncReturn<String> {
@@ -1463,10 +1465,17 @@ pub fn main_load_recent_peers() {
         );
     };
 
-    if !config::APP_DIR.read().unwrap().is_empty() {
+    if !cfg!(any(target_os = "android", target_os = "ios"))
+        || !config::APP_DIR.read().unwrap().is_empty()
+    {
         let discovered = config::LanPeers::load().peers;
         let now = hbb_common::get_time();
-        let peers: Vec<_> = LocalConfig::get_recent_lan_endpoints()
+        let favorites = LocalConfig::get_fav();
+        let mut recent = LocalConfig::get_recent_lan_endpoints();
+        // Stable sort keeps the most recently connected devices first within
+        // each group, while placing favorites above other history entries.
+        recent.sort_by_key(|peer| !favorites.contains(&peer.endpoint));
+        let peers: Vec<_> = recent
             .into_iter()
             .map(|peer| recent_lan_endpoint_to_map(peer, &discovered, now))
             .collect();
@@ -1484,7 +1493,9 @@ pub fn main_load_fav_peers() {
             serde_json::ser::to_string(&data).unwrap_or("".to_owned()),
         );
     };
-    if !config::APP_DIR.read().unwrap().is_empty() {
+    if !cfg!(any(target_os = "android", target_os = "ios"))
+        || !config::APP_DIR.read().unwrap().is_empty()
+    {
         let favs = get_fav();
         let discovered = config::LanPeers::load().peers;
         let now = hbb_common::get_time();

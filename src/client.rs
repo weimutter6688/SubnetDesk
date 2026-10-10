@@ -1925,6 +1925,9 @@ impl LoginConfigHandler {
                 &self.lan_fingerprint,
             ) {
                 log::error!("Failed to store recent LAN endpoint: {err}");
+            } else {
+                #[cfg(any(feature = "flutter", target_os = "android", target_os = "ios"))]
+                crate::flutter_ffi::main_load_recent_peers();
             }
         }
         self.supported_encoding = pi.encoding.clone().unwrap_or_default();
@@ -2734,6 +2737,9 @@ pub async fn send_lan_login_with_os_login(
         password.zeroize();
         return;
     }
+    // Record the application username actually sent, independently of whether
+    // credentials came from a dialog, saved password or reusable identity.
+    lc.write().unwrap().lan_access_username = username.clone();
     let mut request = lc
         .read()
         .unwrap()

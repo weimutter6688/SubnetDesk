@@ -93,16 +93,13 @@ class _PeerCardState extends State<_PeerCard>
   }
 
   String _primaryLabel(Peer peer) {
-    if (!_isDiscoveredPeer) {
-      return peer.alias.isEmpty ? formatID(peer.id) : peer.alias;
-    }
     if (peer.alias.isNotEmpty) return peer.alias;
     if (peer.hostname.isNotEmpty) return peer.hostname;
     return formatID(peer.id);
   }
 
   String _secondaryLabel(Peer peer) {
-    if (!_isDiscoveredPeer) {
+    if (!_isDiscoveredPeer && peer.alias.isNotEmpty) {
       return hideUsernameOnCard == true
           ? peer.hostname
           : '${peer.username}${peer.username.isNotEmpty && peer.hostname.isNotEmpty ? '@' : ''}${peer.hostname}';

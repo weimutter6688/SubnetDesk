@@ -1633,7 +1633,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   LocalNetworkPermissionStatus _localNetworkPermission =
       LocalNetworkPermissionStatus.unknown;
   bool _checkingLocalNetworkPermission = false;
-  PeerTabIndex _selectedPeerTab = PeerTabIndex.lan;
+  PeerTabIndex _selectedPeerTab =
+      PeerTabIndex.values[gFFI.peerTabModel.currentTab];
   String? _selectedFavoriteGroupId;
 
   final RxBool _editHover = false.obs;
@@ -1752,12 +1753,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                   const SizedBox(height: 8),
                   _buildSidebarItem(
                     context,
-                    icon: Icons.devices_outlined,
-                    label: translate('Discovered'),
-                    tab: PeerTabIndex.lan,
-                  ),
-                  _buildSidebarItem(
-                    context,
                     icon: Icons.history_rounded,
                     label: translate('Recent sessions'),
                     tab: PeerTabIndex.recent,
@@ -1770,6 +1765,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                   ),
                   if (_selectedPeerTab == PeerTabIndex.fav)
                     _buildFavoriteGroupSidebar(context),
+                  _buildSidebarItem(
+                    context,
+                    icon: Icons.devices_outlined,
+                    label: translate('Discovered'),
+                    tab: PeerTabIndex.lan,
+                  ),
                   _buildSidebarItem(
                     context,
                     icon: Icons.settings_outlined,

@@ -229,6 +229,8 @@ class _PeersViewState extends State<_PeersView> {
 
   Future<List<Peer>>? matchPeers(
       String searchText, String sortedBy, List<Peer> peers) async {
+    // Sorting a view must not replace the model's last-connected order.
+    peers = peers.toList();
     if (widget.peerFilter != null) {
       peers = peers.where((peer) => widget.peerFilter!(peer)).toList();
     }
