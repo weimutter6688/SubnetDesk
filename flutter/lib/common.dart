@@ -3943,7 +3943,7 @@ String mouseButtonsToPeer(int buttons) {
   }
 }
 
-/// Build an avatar widget from an avatar URL or data URI string.
+/// Build an avatar from an inline image; peer-supplied URLs must not fetch data.
 /// Returns [fallback] if avatar is empty or cannot be decoded.
 /// [borderRadius] defaults to [size]/2 (circle).
 Widget? buildAvatarWidget({
@@ -3963,8 +3963,6 @@ Widget? buildAvatarWidget({
         imageProvider = MemoryImage(base64Decode(trimmed.substring(comma + 1)));
       } catch (_) {}
     }
-  } else if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    imageProvider = NetworkImage(trimmed);
   }
 
   if (imageProvider == null) return fallback;
