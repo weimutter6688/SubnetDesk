@@ -24,12 +24,9 @@ on:
 # in this file!
 
 env:
-  SCITER_RUST_VERSION: "1.75" # https://github.com/rustdesk/rustdesk/discussions/7503, also 1.78 has ABI change which causes our sciter version not working, https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
-  RUST_VERSION: "1.82" # axum-server 0.7.3 requires Rust 1.82; legacy Sciter keeps its separate toolchain above.
-  MAC_RUST_VERSION: "1.82"
+  RUST_VERSION: "1.82.0" # Reviewed archive hashes are in scripts/build-downloads.json.
+  MAC_RUST_VERSION: "1.82.0"
   CARGO_NDK_VERSION: "3.1.2"
-  SCITER_ARMV7_CMAKE_VERSION: "3.29.7"
-  SCITER_NASM_DEBVERSION: "2.15.05-1"
   LLVM_VERSION: "15.0.6"
   FLUTTER_VERSION: "3.44.1"
   DART_VERSION: "3.12.1"
@@ -226,7 +223,8 @@ jobs:
           if (!(Test-Path ./rustdesk/SubnetDesk-weimutter6688.exe)) { throw "Missing fork executable" }
 
           # Download usbmmidd_v2.zip and extract it to ./rustdesk
-          Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
+          python scripts/download_verified.py usbmmidd-v2 --output usbmmidd_v2.zip
+          if ($LASTEXITCODE -ne 0) { throw "Driver checksum verification failed" }
           Expand-Archive usbmmidd_v2.zip -DestinationPath .
           Remove-Item -Path usbmmidd_v2\Win32 -Recurse
           Remove-Item -Path "usbmmidd_v2\deviceinstaller64.exe", "usbmmidd_v2\deviceinstaller.exe", "usbmmidd_v2\usbmmidd.bat"
@@ -328,155 +326,10 @@ jobs:
 
   # The fallback for the flutter version, we use Sciter for 32bit Windows.
   build-for-windows-sciter:
-    if: ${{ false }} # Legacy UI is not a LAN-only release target.
-    name: ${{ matrix.job.target }} (${{ matrix.job.os }})
-    runs-on: ${{ matrix.job.os }}
-    # Temporarily disable this action due to additional test is needed.
-    # if: false
-    strategy:
-      fail-fast: false
-      matrix:
-        job:
-          # - { target: i686-pc-windows-msvc        , os: windows-2022                  }
-          # - { target: x86_64-pc-windows-gnu       , os: windows-2022                  }
-          - {
-              target: i686-pc-windows-msvc,
-              os: windows-2022,
-              arch: x86,
-              vcpkg-triplet: x86-windows-static,
-            }
-          # - { target: aarch64-pc-windows-msvc, os: windows-2022 }
+    if: ${{ false }} # Removed legacy target; no unverified Sciter downloads.
+    runs-on: ubuntu-24.04
     steps:
-      - name: Export GitHub Actions cache environment variables
-        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Checkout source code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Install LLVM and Clang
-        uses: rustdesk-org/install-llvm-action-32bit@6aa7d9ad3df84dff01cd4596dd0fc880a7f47fce # no release tag; commit 2026-05-26
-        with:
-          version: ${{ env.LLVM_VERSION }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: nightly-2023-10-13-${{ matrix.job.target }} # must use nightly here, because of abi_thiscall feature required
-          targets: ${{ matrix.job.target }}
-          components: "rustfmt"
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          prefix-key: ${{ matrix.job.os }}-sciter
-
-      - name: Setup vcpkg with Github Actions binary cache
-        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
-        with:
-          vcpkgDirectory: C:\vcpkg
-          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
-          doNotCache: false
-
-      - name: Install vcpkg dependencies
-        env:
-          VCPKG_DEFAULT_HOST_TRIPLET: ${{ matrix.job.vcpkg-triplet }}
-        run: |
-          if ! $VCPKG_ROOT/vcpkg \
-            install \
-            --triplet ${{ matrix.job.vcpkg-triplet }} \
-            --x-install-root="$VCPKG_ROOT/installed"; then
-            find "${VCPKG_ROOT}/" -name "*.log" | while read -r _1; do
-              echo "$_1:"
-              echo "======"
-              cat "$_1"
-              echo "======"
-              echo ""
-            done
-            exit 1
-          fi
-          head -n 100 "${VCPKG_ROOT}/buildtrees/ffmpeg/build-${{ matrix.job.vcpkg-triplet }}-rel-out.log" || true
-        shell: bash
-
-      - name: Build SubnetDesk
-        id: build
-        shell: bash
-        run: |
-          python3 res/inline-sciter.py
-          # Patch sciter x86
-          sed -i 's/branch = "dyn"/branch = "dyn_x86"/g' ./Cargo.toml
-          cargo update -p sciter-rs --precise 674e07d3066ca9a92ced3816203ab6b652629d1e
-          cargo build --locked --features inline,vram,hwcodec --release --bins
-          mkdir -p ./Release
-          mv ./target/release/rustdesk.exe ./Release/rustdesk.exe
-          curl -LJ -o ./Release/sciter.dll https://github.com/c-smile/sciter-sdk/raw/master/bin.win/x32/sciter.dll
-          echo "output_folder=./Release" >> $GITHUB_OUTPUT
-          curl -LJ -o ./usbmmidd_v2.zip https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip
-          unzip usbmmidd_v2.zip
-          # Do not remove x64 files, because the user may run the 32bit version on a 64bit system.
-          # Do not remove ./usbmmidd_v2/deviceinstaller64.exe, as x86 exe cannot install and uninstall drivers when running on x64,
-          # we need the x64 exe to install and uninstall the driver.
-          rm -rf ./usbmmidd_v2/deviceinstaller.exe ./usbmmidd_v2/usbmmidd.bat
-          mv ./usbmmidd_v2 ./Release || true
-
-      - name: find Runner.res
-        # Windows: find Runner.res (compiled from ./flutter/windows/runner/Runner.rc), copy to ./Runner.res
-        # Runner.rc does not contain actual version, but Runner.res does
-        continue-on-error: true
-        shell: bash
-        run: |
-          runner_res=$(find . -name "Runner.res");
-          if [ "$runner_res" == "" ]; then
-            echo "Runner.res: not found";
-          else
-            echo "Runner.res: $runner_res";
-            cp $runner_res ./libs/portable/Runner.res;
-            echo "list ./libs/portable/Runner.res";
-            ls -l ./libs/portable/Runner.res;
-          fi
-
-      - name: Upload unsigned
-        if: env.UPLOAD_ARTIFACT == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: subnetdesk-weimutter6688-unsigned-windows-${{ matrix.job.arch }}
-          path: Release
-
-      - name: Sign SubnetDesk files
-        if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '-2'
-        shell: bash
-        run: |
-          pip3 install requests argparse
-          BASE_URL=${{ env.SIGN_BASE_URL }} SECRET_KEY=${{ secrets.SIGN_SECRET_KEY }} python3 res/job.py sign_files ./Release/
-
-      - name: Build self-extracted executable
-        shell: bash
-        run: |
-          sed -i '/dpiAware/d' res/manifest.xml
-          pushd ./libs/portable
-          pip3 install -r requirements.txt
-          python3 ./generate.py -f ../../Release/ -o . -e ../../Release/rustdesk.exe
-          popd
-          mkdir -p ./SignOutput
-          mv ./target/release/subnetdesk-weimutter6688-portable-packer.exe ./SignOutput/subnetdesk-weimutter6688-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.exe
-
-      - name: Sign SubnetDesk self-extracted file
-        if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '-2'
-        shell: bash
-        run: |
-          BASE_URL=${{ env.SIGN_BASE_URL }} SECRET_KEY=${{ secrets.SIGN_SECRET_KEY }} python3 res/job.py sign_files ./SignOutput/
-
-      - name: Publish Release
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        if: env.PUBLISH_RELEASE == 'true'
-        with:
-          prerelease: ${{ inputs.upload-tag == 'nightly' || contains(inputs.upload-tag, '-') }}
-          generate_release_notes: true
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            ./SignOutput/subnetdesk-weimutter6688-*.exe
+      - run: echo "Legacy Sciter builds are unavailable in this LAN-only fork."
 
   build-rustdesk-ios:
     if: ${{ inputs.upload-artifact && inputs.build-mobile }}
@@ -653,7 +506,7 @@ jobs:
         shell: bash
         run: |
           pushd /tmp
-          wget https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.22.0/apple-codesign-0.22.0-macos-universal.tar.gz
+          python3 "$GITHUB_WORKSPACE/scripts/download_verified.py" apple-codesign-0.22.0 --output apple-codesign-0.22.0-macos-universal.tar.gz
           tar -zxvf apple-codesign-0.22.0-macos-universal.tar.gz
           mv apple-codesign-0.22.0-macos-universal/rcodesign /usr/local/bin
           popd
@@ -674,7 +527,7 @@ jobs:
           # Do NOT use `brew install nasm` which installs NASM 3.x.
           # NASM 3.x is a complete rewrite with incompatible CLI options and removed features.
           # aom and other multimedia libraries require NASM 2.x for x86/x86_64 assembly.
-          wget https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/macosx/nasm-2.16.03-macosx.zip
+          python3 scripts/download_verified.py nasm-2.16.03-macos --output nasm-2.16.03-macosx.zip
           unzip nasm-2.16.03-macosx.zip
           sudo cp nasm-2.16.03/nasm /usr/local/bin/nasm
           nasm --version
@@ -1555,7 +1408,7 @@ jobs:
             # rust
             pushd /opt
             # do not use rustup, because memory overflow in qemu
-            wget -O rust.tar.gz https://static.rust-lang.org/dist/rust-${{env.RUST_TOOLCHAIN_VERSION}}-${{ matrix.job.target }}.tar.gz
+            python3 /workspace/scripts/download_verified.py rust-${{env.RUST_TOOLCHAIN_VERSION}}-${{ matrix.job.target }} --output rust.tar.gz
             tar -zxvf rust.tar.gz > /dev/null && rm rust.tar.gz
             cd rust-${{env.RUST_TOOLCHAIN_VERSION}}-${{ matrix.job.target }} && ./install.sh
             rm -rf rust-${{env.RUST_TOOLCHAIN_VERSION}}-${{ matrix.job.target }}
@@ -1595,11 +1448,11 @@ jobs:
             esac
             popd
             pushd /opt
-            wget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${{ env.FLUTTER_VERSION }}-stable.tar.xz
+            python3 /workspace/scripts/download_verified.py flutter-${{ env.FLUTTER_VERSION }}-linux --output flutter_linux_${{ env.FLUTTER_VERSION }}-stable.tar.xz
             tar xf flutter_linux_${{ env.FLUTTER_VERSION }}-stable.tar.xz
             if [[ "${{ matrix.job.arch }}" == "aarch64" ]]; then
               rm -rf flutter/bin/cache/dart-sdk
-              wget -O dart-sdk.zip https://storage.googleapis.com/dart-archive/channels/stable/release/${{ env.DART_VERSION }}/sdk/dartsdk-linux-arm64-release.zip
+              python3 /workspace/scripts/download_verified.py dart-${{ env.DART_VERSION }}-linux-arm64 --output dart-sdk.zip
               unzip -q dart-sdk.zip -d flutter/bin/cache
               rm -f flutter/bin/cache/flutter_tools.snapshot flutter/bin/cache/flutter_tools.stamp
               flutter/bin/flutter precache --linux --force
@@ -1871,7 +1724,7 @@ jobs:
             # rust
             pushd /opt
             # do not use rustup, because memory overflow in qemu
-            wget -O rust.tar.gz https://static.rust-lang.org/dist/rust-${{env.RUST_TOOLCHAIN_VERSION}}-x86_64-unknown-linux-gnu.tar.gz
+            python3 /workspace/scripts/download_verified.py rust-${{env.RUST_TOOLCHAIN_VERSION}}-x86_64-unknown-linux-gnu --output rust.tar.gz
             tar -zxvf rust.tar.gz > /dev/null && rm rust.tar.gz
             cd rust-${{env.RUST_TOOLCHAIN_VERSION}}-x86_64-unknown-linux-gnu && ./install.sh
             rm -rf rust-${{env.RUST_TOOLCHAIN_VERSION}}-x86_64-unknown-linux-gnu
@@ -1907,7 +1760,7 @@ jobs:
             export PATH=/opt/flutter/bin:$PATH
             popd
             pushd /opt
-            wget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${{ env.FLUTTER_VERSION }}-stable.tar.xz
+            python3 /workspace/scripts/download_verified.py flutter-${{ env.FLUTTER_VERSION }}-linux --output flutter_linux_${{ env.FLUTTER_VERSION }}-stable.tar.xz
             tar xf flutter_linux_${{ env.FLUTTER_VERSION }}-stable.tar.xz
             flutter doctor -v
 
@@ -1972,230 +1825,10 @@ jobs:
           path: ${{ env.DRM_DEB }}
 
   build-rustdesk-linux-sciter:
-    if: ${{ false }} # Legacy UI is not a LAN-only release target.
-    runs-on: ${{ matrix.job.on }}
-    name: build-rustdesk-linux-sciter ${{ matrix.job.target }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # use a high level qemu-user-static
-        job:
-          - {
-              arch: x86_64,
-              target: x86_64-unknown-linux-gnu,
-              on: ubuntu-22.04,
-              distro: ubuntu18.04,
-              deb_arch: amd64,
-              sciter_arch: x64,
-              vcpkg-triplet: x64-linux,
-              extra_features: ",hwcodec,unix-file-copy-paste",
-            }
-          - {
-              arch: armv7,
-              target: armv7-unknown-linux-gnueabihf,
-              on: ubuntu-22.04-arm,
-              distro: ubuntu18.04-rustdesk,
-              deb_arch: armhf,
-              sciter_arch: arm32,
-              vcpkg-triplet: arm-linux,
-              extra_features: ",unix-file-copy-paste",
-            }
+    if: ${{ false }} # Removed legacy target; no unverified Sciter downloads.
+    runs-on: ubuntu-24.04
     steps:
-      - name: Export GitHub Actions cache environment variables
-        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Checkout source code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Modify vcpkg.json for armv7
-        if: matrix.job.vcpkg-triplet == 'arm-linux'
-        run: |
-          # Replace the baseline in vcpkg.json with ARMV7_VCPKG_COMMIT_ID for armv7 builds
-          sed -i 's/"baseline": ".*"/"baseline": "${{ env.ARMV7_VCPKG_COMMIT_ID }}"/' vcpkg.json
-          echo "Modified vcpkg.json for armv7 build:"
-          grep -A 2 -B 2 '"baseline"' vcpkg.json
-
-      - name: Free Space
-        run: |
-          df -h
-          free -m
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: ${{ env.SCITER_RUST_VERSION }}
-          targets: ${{ matrix.job.target }}
-          components: "rustfmt"
-
-      - name: Save Rust toolchain version
-        run: |
-          RUST_TOOLCHAIN_VERSION=$(cargo --version | awk '{print $2}')
-          echo "RUST_TOOLCHAIN_VERSION=$RUST_TOOLCHAIN_VERSION" >> $GITHUB_ENV
-
-      - uses: rustdesk-org/run-on-arch-action@d3fcfbb632b84cf7f6bc772bfaaa2c2f4f8789a8 # no release tag; commit 2026-05-26
-        name: Build SubnetDesk sciter binary for ${{ matrix.job.arch }}
-        id: vcpkg
-        with:
-          arch: ${{ matrix.job.arch }}
-          distro: ${{ matrix.job.distro }}
-          githubToken: ${{ github.token }}
-          setup: |
-            ls -l "${PWD}"
-          dockerRunArgs: |
-            --volume "${PWD}:/workspace"
-          shell: /bin/bash
-          install: |
-            apt-get update
-            apt-get install -y \
-               build-essential \
-               clang \
-               curl \
-               gcc \
-               git \
-               g++ \
-               libayatana-appindicator3-dev \
-               libasound2-dev \
-               libclang-dev \
-               libdbus-1-dev \
-               libglib2.0-dev \
-               libgstreamer1.0-dev \
-               libgstreamer-plugins-base1.0-dev \
-               libgtk-3-dev \
-               liblzma-dev \
-               libpam0g-dev \
-               libpulse-dev \
-               libva-dev \
-               libxcb-randr0-dev \
-               libxcb-shape0-dev \
-               libxcb-xfixes0-dev \
-               libxdo-dev \
-               libxfixes-dev \
-               ninja-build \
-               pkg-config \
-               python3 \
-               python3.7 \
-               rpm \
-               unzip \
-               wget \
-               xz-utils \
-               zip \
-               libssl-dev
-            # arm-linux needs CMake and vcokg built from source as there
-            # are no prebuilts available from Kitware and Microsoft
-            if [ "${{ matrix.job.vcpkg-triplet }}" = "arm-linux" ]; then
-              # install gcc/g++ 8 for vcpkg and OpenSSL headers for CMake
-              apt-get install -y gcc-8 g++-8
-              # bootstrap CMake amd add it to PATH
-              git clone --depth 1 https://github.com/kitware/cmake -b "v${{ env.SCITER_ARMV7_CMAKE_VERSION }}" /tmp/cmake
-              pushd /tmp/cmake
-              ./bootstrap --generator='Unix Makefiles' "--prefix=/opt/cmake-${{ env.SCITER_ARMV7_CMAKE_VERSION }}-linux-armhf"
-              make -j1 install
-              popd
-              rm -rf /tmp/cmake
-              export PATH="/opt/cmake-${{ env.SCITER_ARMV7_CMAKE_VERSION }}-linux-armhf/bin:$PATH"
-            fi
-            # bootstrap vcpkg and set VCPKG_ROOT
-            export VCPKG_ROOT=/opt/artifacts/vcpkg
-            mkdir -p /opt/artifacts
-            pushd /opt/artifacts
-            rm -rf vcpkg
-            git clone https://github.com/microsoft/vcpkg
-            pushd vcpkg
-            # build vcpkg helper executable with gcc-8 for arm-linux but use prebuilt one on x64-linux
-            if [ "${{ matrix.job.vcpkg-triplet }}" = "arm-linux" ]; then
-              git reset --hard ${{ env.ARMV7_VCPKG_COMMIT_ID }}
-              CC=/usr/bin/gcc-8 CXX=/usr/bin/g++-8 sh bootstrap-vcpkg.sh -disableMetrics
-            else
-              git reset --hard ${{ env.VCPKG_COMMIT_ID }}
-              sh bootstrap-vcpkg.sh -disableMetrics
-            fi
-            popd
-            popd
-            # rust
-            pushd /opt
-            # do not use rustup, because memory overflow in qemu
-            wget --output-document rust.tar.gz https://static.rust-lang.org/dist/rust-${{env.RUST_TOOLCHAIN_VERSION}}-${{ matrix.job.target }}.tar.gz
-            tar -zxvf rust.tar.gz > /dev/null && rm rust.tar.gz
-            pushd rust-${{env.RUST_TOOLCHAIN_VERSION}}-${{ matrix.job.target }}
-            ./install.sh
-            popd
-            rm -rf rust-${{env.RUST_TOOLCHAIN_VERSION}}-${{ matrix.job.target }}
-            popd
-            # install newer nasm for aom
-            wget --output-document nasm.deb "http://ftp.us.debian.org/debian/pool/main/n/nasm/nasm_${{ env.SCITER_NASM_DEBVERSION }}_${{ matrix.job.deb_arch }}.deb"
-            dpkg -i nasm.deb
-            rm -f nasm.deb
-          run: |
-            # disable git safe.directory
-            git config --global --add safe.directory "*"
-            # set python3.7 as default python3
-            update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
-            # add built CMake to PATH and set VCPKG_FORCE_SYSTEM_BINARIES Afor arm-linux
-            if [ "${{ matrix.job.vcpkg-triplet }}" = "arm-linux" ]; then
-              export PATH="/opt/cmake-${{ env.SCITER_ARMV7_CMAKE_VERSION }}-linux-armhf/bin:$PATH"
-              export VCPKG_FORCE_SYSTEM_BINARIES=1
-            fi
-            # edit cargo config
-            mkdir -p ~/.cargo/
-            echo """
-              [source.crates-io]
-              registry = 'https://github.com/rust-lang/crates.io-index'
-            """ > ~/.cargo/config
-            cat ~/.cargo/config
-            # install dependencies from vcpkg
-            export VCPKG_ROOT=/opt/artifacts/vcpkg
-            # remove this when support higher version
-            export USE_AOM_391=1
-            if ! $VCPKG_ROOT/vcpkg install --triplet ${{ matrix.job.vcpkg-triplet }} --x-install-root="$VCPKG_ROOT/installed"; then
-              find "${VCPKG_ROOT}/" -name "*.log" | while read -r _1; do
-                echo "$_1:"
-                echo "======"
-                cat "$_1"
-                echo "======"
-                echo ""
-              done
-              exit 1
-            fi
-            head -n 100 "${VCPKG_ROOT}/buildtrees/ffmpeg/build-${{ matrix.job.vcpkg-triplet }}-rel-out.log" || true
-            # build rustdesk
-            python3 ./res/inline-sciter.py
-            export CARGO_INCREMENTAL=0
-            cargo build --locked --features inline${{ matrix.job.extra_features }} --release --bins --jobs 1
-            # make debian package
-            mkdir -p ./Release
-            mv ./target/release/rustdesk ./Release/rustdesk
-            wget -O ./Release/libsciter-gtk.so https://github.com/c-smile/sciter-sdk/raw/master/bin.lnx/${{ matrix.job.sciter_arch }}/libsciter-gtk.so
-            export DEB_ARCH=${{ matrix.job.deb_arch }}
-            ./build.py --package ./Release
-
-      - name: Rename SubnetDesk
-        shell: bash
-        run: |
-          for name in subnetdesk-weimutter6688-*.deb; do
-              # use cp to duplicate deb files to fit other packages.
-              cp "$name" "${name%%.deb}-${{ matrix.job.arch }}-sciter.deb"
-          done
-
-      - name: Publish debian package
-        if: env.PUBLISH_RELEASE == 'true'
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        with:
-          prerelease: ${{ inputs.upload-tag == 'nightly' || contains(inputs.upload-tag, '-') }}
-          generate_release_notes: true
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            subnetdesk-weimutter6688-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
-
-      - name: Upload deb
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: env.UPLOAD_ARTIFACT == 'true'
-        with:
-          name: subnetdesk-weimutter6688-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
-          path: subnetdesk-weimutter6688-${{ env.VERSION }}-${{ matrix.job.arch }}-sciter.deb
+      - run: echo "Legacy Sciter builds are unavailable in this LAN-only fork."
 
   build-appimage:
     name: Build appimage ${{ matrix.job.target }}

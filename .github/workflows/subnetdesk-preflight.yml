@@ -25,6 +25,11 @@ jobs:
       - name: Check LAN-only residuals
         run: bash scripts/check_lan_only_residuals.sh
 
+      - name: Check verified build downloads
+        run: |
+          python3 scripts/test_download_verified.py
+          ! grep -E 'raw/(master|main)/|curl .*(https?://)|wget .*(https?://)|Invoke-WebRequest' .github/workflows/flutter-build.yml
+
       - name: Check SubnetDesk branding and icons
         run: bash scripts/check_subnetdesk_branding.sh
 
@@ -40,14 +45,13 @@ jobs:
           grep -Fq 'Delete all existing nightly assets' .github/workflows/flutter-nightly.yml
           grep -Fq 'publish-download-table:' .github/workflows/flutter-build.yml
           grep -Fq 'flutter build linux --release --target-platform linux-arm64' .github/workflows/flutter-build.yml
-          grep -Fq 'dartsdk-linux-arm64-release.zip' .github/workflows/flutter-build.yml
+          grep -Fq 'dart-${{ env.DART_VERSION }}-linux-arm64 --output dart-sdk.zip' .github/workflows/flutter-build.yml
           grep -Fq 'rm -f flutter/bin/cache/flutter_tools.snapshot flutter/bin/cache/flutter_tools.stamp' .github/workflows/flutter-build.yml
           grep -Fq 'flutter precache --linux --force' .github/workflows/flutter-build.yml
           ! grep -Fq 'flutter-elinux' .github/workflows/flutter-build.yml
           ! grep -Fq "features.append('software-update')" build.py
           ! grep -Fq 'software-update' flutter/run.sh
           sed -n '/^  build-for-windows-flutter:/,/^  build-for-windows-sciter:/p' .github/workflows/flutter-build.yml | grep -Fq 'toolchain: ${{ env.RUST_VERSION }}'
-          ! sed -n '/^  build-for-windows-flutter:/,/^  build-for-windows-sciter:/p' .github/workflows/flutter-build.yml | grep -Fq 'toolchain: ${{ env.SCITER_RUST_VERSION }}'
           for artifact in \
             'name: subnetdesk-weimutter6688-windows-' \
             'name: subnetdesk-weimutter6688-macos-' \
@@ -78,7 +82,7 @@ jobs:
         run: bash scripts/check_release_upload_retry.sh
 
       - name: Check Python scripts
-        run: python3 -m py_compile build.py scripts/generate_subnetdesk_icons.py
+        run: python3 -m py_compile build.py scripts/generate_subnetdesk_icons.py scripts/download_verified.py
 
       - name: Check workflow syntax
         run: |
