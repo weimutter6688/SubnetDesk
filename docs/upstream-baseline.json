@@ -1,0 +1,8 @@
+{
+  "repository": "rustdesk/rustdesk",
+  "fork_point_commit": "5abf4e9724dc9a8c9b45dfe13e71af11616eb2c8",
+  "first_lan_only_commit": "de81051cd4723d8f2d081b43c34b931d4b2b55de",
+  "monitor_since_utc": "2026-07-16T08:00:38Z",
+  "upstream_head_observed_2026_10_10": "c8532719c0cfc497c64b9f1e0bc9d981db9137db",
+  "common_library_import_commit": "64aab1c4585a9459c9849f0d0b53af5bbc40eacd"
+}
