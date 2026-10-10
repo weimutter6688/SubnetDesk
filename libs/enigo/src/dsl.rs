@@ -37,7 +37,28 @@ impl Error for ParseError {
 }
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.to_string())
+        match self {
+            ParseError::UnknownTag(tag) => write!(f, "Unknown tag: {tag}"),
+            ParseError::UnexpectedOpen =>
+                f.write_str("Unescaped open bracket ({) found inside tag name"),
+            ParseError::UnmatchedOpen =>
+                f.write_str("Unmatched open bracket ({). No matching close (})"),
+            ParseError::UnmatchedClose =>
+                f.write_str("Unmatched close bracket (}). No previous open ({)"),
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn parse_errors_format_without_recursion() {
+    for (error, message) in [
+        (ParseError::UnknownTag("INVALID".to_owned()), "Unknown tag: INVALID"),
+        (ParseError::UnexpectedOpen, "Unescaped open bracket ({) found inside tag name"),
+        (ParseError::UnmatchedOpen, "Unmatched open bracket ({). No matching close (})"),
+        (ParseError::UnmatchedClose, "Unmatched close bracket (}). No previous open ({)"),
+    ] {
+        assert_eq!(error.to_string(), message);
     }
 }
 
