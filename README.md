@@ -195,6 +195,13 @@ time does not trigger recovery, and resume from sleep gets a fresh grace period.
 Recovery interrupts existing sessions; portable and UI processes do not perform
 this automatic restart. See [Windows idle/reconnect recovery](docs/idle-reconnect-recovery.md).
 
+Closing RDP can leave Windows on a login session before restoring the user
+desktop. The service now waits through an unavailable session ID instead of
+closing its server for an invalid replacement. A real session change can still
+interrupt connections; established sessions retry transport failures. See
+[Windows session transitions](docs/windows-session-disconnect.md) for log evidence
+and verification limits.
+
 There is no GitHub update checker, downloader, installer, or online help link in
 the application. Distribute updates manually over LAN/VPN or offline media.
 Build dependencies and repository documentation may still reference GitHub.
