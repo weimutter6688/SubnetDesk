@@ -9,6 +9,8 @@ use hbb_common::{
 };
 use std::{collections::VecDeque, future::Future};
 
+const FALLBACK_DELAY: Duration = Duration::from_millis(80);
+
 // Prefer the requested address, but do not wait for a stale LAN/VPN route to
 // time out before trying an alternative. Dropping pending futures closes losers.
 pub(super) async fn race_candidates<T, F, Fut>(candidates: Vec<String>, connect: F) -> ResultType<T>
@@ -36,7 +38,7 @@ where
             _ = tokio::time::sleep_until(next_launch), if pending.len() < 2 && !candidates.is_empty() => {
                 if let Some(candidate) = candidates.pop_front() {
                     pending.push(connect(candidate));
-                    next_launch = Instant::now() + Duration::from_millis(250);
+                    next_launch = Instant::now() + FALLBACK_DELAY;
                 }
             }
         }
@@ -78,7 +80,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(winner, "vpn");
-        assert!(start.elapsed() >= Duration::from_millis(250));
+        assert!(start.elapsed() >= FALLBACK_DELAY);
         assert_eq!(active.load(Ordering::SeqCst), 0);
     }
 
@@ -93,6 +95,17 @@ mod tests {
         .unwrap();
         assert_eq!(winner, "lan");
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn nearby_alternative_can_win_before_slow_vpn_handshake() {
+        let winner = race_candidates(vec!["vpn".into(), "lan".into()], |address| async move {
+            if address == "vpn" {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            Ok(address)
+        }).await.unwrap();
+        assert_eq!(winner, "lan");
     }
 
     #[tokio::test]

@@ -266,7 +266,10 @@ impl Client {
         let requested = hbb_common::lan::Endpoint::parse(peer)?
             .authority()
             .to_owned();
-        let (expected_fingerprint, mut candidates) = crate::lan::connection_candidates(&requested);
+        let lookup_endpoint = requested.clone();
+        let (expected_fingerprint, mut candidates) = tokio::task::spawn_blocking(move || {
+            crate::lan::connection_candidates(&lookup_endpoint)
+        }).await?;
         let mut discovery = expected_fingerprint.as_ref().map(|_| {
             tokio::spawn(async {
                 if let Err(err) = crate::lan::discover_async().await {
@@ -336,7 +339,10 @@ impl Client {
                 if let Err(err) = discovery.await {
                     log::debug!("LAN discovery fallback task failed: {err}");
                 }
-                let (_, refreshed) = crate::lan::connection_candidates(&requested);
+                let lookup_endpoint = requested.clone();
+                let (_, refreshed) = tokio::task::spawn_blocking(move || {
+                    crate::lan::connection_candidates(&lookup_endpoint)
+                }).await?;
                 candidates = refreshed;
                 if candidates
                     .iter()
