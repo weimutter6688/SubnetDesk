@@ -130,6 +130,8 @@ async fn connect_and_login(
         *close_port_forward = true;
         return Ok(None);
     }
+    interface.get_lch().write().unwrap().lan_fingerprint =
+        crate::lan_protocol::fingerprint(&device_public_key);
     interface.send_initial_lan_login(&mut stream).await;
     let mut buffer = Vec::new();
     let mut received = false;

@@ -1862,68 +1862,21 @@ impl<T: InvokeUiSession> Interface for Session<T> {
 
     async fn send_initial_lan_login(&self, peer: &mut Stream) {
         let mut credential = self.lan_credential();
-        let mut explicit_identity_requested = false;
         if credential.is_none() {
-            let requested_identity = self.lan_identity_request.lock().unwrap().clone();
-            explicit_identity_requested = requested_identity.is_some();
+            let request = self.lan_identity_request.lock().unwrap().clone();
             let fingerprint = self.lc.read().unwrap().lan_fingerprint.clone();
-            let identity_result = tokio::task::spawn_blocking(move || {
-                if let Some(request) = requested_identity {
-                    crate::lan_identity::load(&request.identity_id)
-                        .map(|identity| Some((identity, request.bind_on_success)))
-                } else {
-                    crate::lan_identity::load_for_fingerprint(&fingerprint)
-                        .map(|identity| identity.map(|identity| (identity, false)))
-                }
-            })
-            .await;
-            match identity_result {
-                Ok(Ok(Some((identity, bind_identity_on_success)))) => {
-                    let identity_credential = LanSessionCredential {
-                        username: identity.username,
-                        password: identity.password,
-                        remember: false,
-                        identity_id: identity.id,
-                        bind_identity_on_success,
-                    };
-                    self.lc.write().unwrap().lan_access_username =
-                        identity_credential.username.clone();
-                    *self.lan_credential.lock().unwrap() = Some(identity_credential.clone());
-                    credential = Some(identity_credential);
+            let result = tokio::task::spawn_blocking(move || {
+                crate::lan_identity::load_connection_credential(&fingerprint, request)
+            }).await;
+            match result {
+                Ok(Ok(Some(saved))) => {
+                    self.lc.write().unwrap().lan_access_username = saved.username.clone();
+                    *self.lan_credential.lock().unwrap() = Some(saved.clone());
+                    credential = Some(saved);
                 }
                 Ok(Ok(None)) => {}
-                Ok(Err(err)) => {
-                    log::warn!("Failed to load LAN identity: {err}");
-                }
-                Err(err) => {
-                    log::warn!("LAN identity credential task failed: {err}");
-                }
-            }
-        }
-        if credential.is_none() && !explicit_identity_requested {
-            let lc = self.lc.clone();
-            let remembered = match tokio::task::spawn_blocking(move || {
-                lc.read().unwrap().load_remembered_lan_credential()
-            })
-            .await
-            {
-                Ok(remembered) => remembered,
-                Err(err) => {
-                    log::warn!("Failed to read the remembered LAN credential: {err}");
-                    None
-                }
-            };
-            if let Some((username, password)) = remembered {
-                let remembered = LanSessionCredential {
-                    username,
-                    password,
-                    remember: true,
-                    identity_id: String::new(),
-                    bind_identity_on_success: false,
-                };
-                self.lc.write().unwrap().lan_access_username = remembered.username.clone();
-                *self.lan_credential.lock().unwrap() = Some(remembered.clone());
-                credential = Some(remembered);
+                Ok(Err(err)) => log::warn!("Failed to load LAN connection credential: {err}"),
+                Err(err) => log::warn!("LAN credential task failed: {err}"),
             }
         }
         if let Some(mut credential) = credential {

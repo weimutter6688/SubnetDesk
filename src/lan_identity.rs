@@ -7,6 +7,7 @@ use hbb_common::{
 use serde::Serialize;
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
+use crate::ui_session_interface::{LanIdentityRequest, LanSessionCredential};
 
 const MAX_IDENTITY_NAME_LEN: usize = 64;
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
@@ -233,6 +234,60 @@ pub fn load_for_fingerprint(fingerprint: &str) -> ResultType<Option<ResolvedLanI
     }
 }
 
+// Called on the blocking pool, after the peer's fingerprint has been verified.
+pub(crate) fn load_connection_credential(
+    fingerprint: &str,
+    request: Option<LanIdentityRequest>,
+) -> ResultType<Option<LanSessionCredential>> {
+    resolve_connection_credential(
+        request,
+        &LocalConfig::get_bound_lan_identity_id(fingerprint),
+        &LocalConfig::get_default_lan_identity_id(),
+        load,
+        || crate::client::load_remembered_lan_credential_for_fingerprint(fingerprint),
+    )
+}
+
+fn resolve_connection_credential(
+    request: Option<LanIdentityRequest>,
+    bound_id: &str,
+    default_id: &str,
+    load_identity: impl Fn(&str) -> ResultType<ResolvedLanIdentity>,
+    load_saved: impl FnOnce() -> Option<(String, Vec<u8>)>,
+) -> ResultType<Option<LanSessionCredential>> {
+    let identity_credential = |id: &str, bind_on_success| {
+        load_identity(id).map(|identity| LanSessionCredential {
+            username: identity.username,
+            password: identity.password,
+            remember: false,
+            identity_id: identity.id,
+            bind_identity_on_success: bind_on_success,
+        })
+    };
+    if let Some(request) = request {
+        // An explicit selection must not silently log in as another account.
+        return identity_credential(&request.identity_id, request.bind_on_success).map(Some);
+    }
+    if !bound_id.is_empty() {
+        match identity_credential(bound_id, false) {
+            Ok(credential) => return Ok(Some(credential)),
+            Err(err) => log::warn!("Failed to load bound LAN identity: {err}"),
+        }
+    }
+    // A password remembered for this device takes precedence over the general
+    // default account. Do not read both passwords when the first one is usable.
+    if let Some((username, password)) = load_saved() {
+        return Ok(Some(LanSessionCredential {
+            username, password, remember: true,
+            identity_id: String::new(), bind_identity_on_success: false,
+        }));
+    }
+    if !default_id.is_empty() && default_id != bound_id {
+        return identity_credential(default_id, false).map(Some);
+    }
+    Ok(None)
+}
+
 pub fn has_legacy_credential(fingerprint: &str) -> bool {
     crate::client::load_remembered_lan_credential_for_fingerprint(fingerprint).is_some()
 }
@@ -264,6 +319,54 @@ pub fn import_legacy_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_identity(id: &str) -> ResultType<ResolvedLanIdentity> {
+        Ok(ResolvedLanIdentity {
+            id: id.to_owned(), username: id.to_owned(), password: b"test-only-password".to_vec(),
+        })
+    }
+
+    #[test]
+    fn saved_device_password_wins_over_default_without_reading_default_secret() {
+        let saved = resolve_connection_credential(None, "", "default",
+            |_| panic!("Default credential must not be read"),
+            || Some(("device-user".to_owned(), b"test-only-password".to_vec())))
+            .unwrap().unwrap();
+        assert_eq!(saved.username, "device-user");
+        assert!(saved.remember);
+    }
+
+    #[test]
+    fn explicit_and_bound_identities_take_precedence_without_reading_saved_password() {
+        for request in [None, Some(LanIdentityRequest {
+            identity_id: "selected".to_owned(), bind_on_success: true,
+        })] {
+            let explicit = request.is_some();
+            let credential = resolve_connection_credential(request, "bound", "default",
+                test_identity, || panic!("Saved password must not be read"))
+                .unwrap().unwrap();
+            assert_eq!(credential.identity_id, if explicit { "selected" } else { "bound" });
+            assert_eq!(credential.bind_identity_on_success, explicit);
+        }
+    }
+
+    #[test]
+    fn explicit_identity_failure_does_not_fall_back_to_another_account() {
+        let result = resolve_connection_credential(Some(LanIdentityRequest {
+            identity_id: "missing".to_owned(), bind_on_success: false,
+        }), "bound", "default", |_| Err(anyhow!("missing")),
+            || panic!("Explicit selection must not fall back"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn default_identity_is_used_only_without_a_saved_device_password() {
+        let credential = resolve_connection_credential(None, "", "default",
+            test_identity, || None).unwrap().unwrap();
+        assert_eq!(credential.identity_id, "default");
+        assert!(resolve_connection_credential(None, "", "", test_identity, || None)
+            .unwrap().is_none());
+    }
 
     #[test]
     fn identity_name_validation_trims_and_rejects_controls() {
