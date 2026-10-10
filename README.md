@@ -211,10 +211,11 @@ See [manual update guidance](docs/automatic-updates.md) for preserving existing 
 
 ## 🛠️ Build from source
 
-Clone the repository with its submodules, then run the Flutter desktop build:
+Clone the repository, then run the Flutter desktop build. The common library is
+included in the main repository (see [provenance](docs/common-library-provenance.md)):
 
 ```bash
-git clone --recurse-submodules https://github.com/zibo-chen/SubnetDesk.git
+git clone https://github.com/weimutter6688/SubnetDesk.git
 cd SubnetDesk
 ./build.py --flutter --hwcodec
 ```

@@ -196,10 +196,11 @@ Windows 安装版中，以系统权限运行且后台服务仍在运行的被控
 
 ## 🛠️ 从源码构建
 
-拉取仓库及其子模块，然后执行 Flutter 桌面端构建：
+拉取仓库后执行 Flutter 桌面端构建。共同库已纳入主仓，无需单独拉取子模块，
+版本与来源见[共同库记录](docs/common-library-provenance.md)：
 
 ```bash
-git clone --recurse-submodules https://github.com/zibo-chen/SubnetDesk.git
+git clone https://github.com/weimutter6688/SubnetDesk.git
 cd SubnetDesk
 ./build.py --flutter --hwcodec
 ```

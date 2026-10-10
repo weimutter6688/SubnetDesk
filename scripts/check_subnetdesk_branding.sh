@@ -30,7 +30,11 @@ require_fixed flatpak/rustdesk.json '"id": "com.zibochen.SubnetDesk"'
 require_fixed flatpak/com.zibochen.SubnetDesk.metainfo.xml '<name>SubnetDesk</name>'
 require_fixed res/rustdesk.desktop 'Name=SubnetDesk'
 require_fixed res/subnetdesk.service 'Description=SubnetDesk'
-require_fixed .gitmodules 'https://github.com/zibo-chen/hbb_common.git'
+require_fixed docs/common-library-provenance.md '64aab1c4585a9459c9849f0d0b53af5bbc40eacd'
+if [[ -e .gitmodules ]] || git ls-files --stage libs/hbb_common | grep -q '^160000 '; then
+  printf 'Common library must be tracked in the main repository, without a gitlink.\n' >&2
+  exit 1
+fi
 require_fixed build.py 'Build/Products/Release/SubnetDesk.app'
 require_fixed .github/workflows/flutter-build.yml 'Build/Products/Release/SubnetDesk.app'
 require_fixed .github/workflows/flutter-build.yml 'subnetdesk-${{ env.VERSION }}'
