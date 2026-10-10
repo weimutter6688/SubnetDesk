@@ -69,11 +69,15 @@ That makes it a good fit for home labs, offices, classrooms, on-site support, an
 | | Capability | Details |
 | --- | --- | --- |
 | 🔎 | Local discovery | Find nearby devices automatically over mDNS. |
-| ⚡ | Direct connections | Connect by IP address or hostname using a configurable TCP port. |
+| ⚡ | Quick connections | Enter an IP address or hostname in the desktop address bar and press Enter; the TCP port is configurable. |
 | 🔐 | Access protection | Authenticate with a username and password; passwords are stored as Argon2id hashes. |
+| 🔑 | Reusable accounts | Save account profiles, choose a default, or bind a profile to a device. |
 | 🛡️ | Device verification | Verify and remember endpoint fingerprints before trusting a device. |
 | 🌐 | Network allowlist | Restrict incoming connections to selected CIDR networks. |
-| ⭐ | Fast reconnection | Keep recent devices, favorites, and stable device identities. |
+| ⭐ | Recent devices and favorites | Keep successful connections across restarts, even without remembering passwords; display device names and addresses with search and sorting. |
+| 🎚️ | Connection modes | Choose low latency, text clarity, or image quality, with adaptive bitrate/FPS and resolution scaling where supported. |
+| 🔄 | Automatic reconnection | Retry established sessions after temporary network failures, with device verification preserved. |
+| 🩺 | Diagnostics | Export recent logs and version information from settings to help investigate problems. |
 | 🖥️ | RustDesk experience | Retain remote control, clipboard, audio, and file-transfer capabilities without a public coordination server. |
 
 <a id="download"></a>
@@ -92,20 +96,28 @@ Download stable packages from **[GitHub Releases](https://github.com/zibo-chen/S
 > [!NOTE]
 > Nightly packages are development builds. Prefer the latest stable release for daily use.
 
+Windows distributions may also include a portable `.zip`. Extract the entire folder before running `SubnetDesk.exe`; keep its bundled libraries and data files together.
+
 <a id="quick-start"></a>
 
 ## 🚀 Quick start
 
 1. Install and open SubnetDesk on both devices.
 2. A controlled device with no previously configured access account initializes username `subnetrust` and password `subnet@local`, listening on port `21118` by default. Change credentials and LAN discovery options in **LAN settings**.
-3. On the controller, select a discovered device or enter `hostname:port` / `IP:port` manually.
-4. Verify the device fingerprint on first connection, then connect.
+3. On the controller, select a discovered device, or enter a hostname/IP address (optionally with `:port`) in the desktop address bar and press **Enter**.
+4. Verify the device fingerprint on first connection. When prompted, select an account profile or enter the controlled device's username and password, then press **Enter** to connect. Enter also submits from the username/password fields after switching between them with **Tab**.
 
 The default credentials are shared by all copies; replace the password in LAN settings. Existing credentials are preserved, and restarting does not restore defaults after credentials are changed or explicitly cleared. These credentials are independent of the operating system login.
 
 <p align="center">
   <img src="assets/screenshots/lan-settings.png" alt="SubnetDesk LAN settings" width="880">
 </p>
+
+### Accounts and recent devices
+
+Use **Account** on the desktop to manage reusable account profiles. You can select a profile for a connection and remember its association with that device. Credential selection uses an explicitly selected profile first, then a device-bound profile, then that device's remembered password, and finally the default profile.
+
+Successful connections appear in recent devices independently of **Remember password** and remain after restarting. Records follow the verified device fingerprint when its address changes; deleted records remain deleted until you successfully connect again. Favorites, search, sorting, and grid/list views help manage frequently used devices.
 
 ### Network checklist
 
@@ -135,15 +147,46 @@ rules are preserved. Saving an empty list denies new native connections and stay
 empty after restart. Web access inherits this list unless its own allowlist is set.
 These are source-address rules, not automatic detection of a VPN tunnel.
 
-Video starts at 30 FPS with a conservative bitrate, adapts to congestion and decoder
-capacity, and gradually recovers up to the selected quality/FPS limits. Stable VPN
-RTT is distinguished from queueing delay. Known-device reconnects try a second
-address after 250 ms, with at most two concurrent attempts and fingerprint checks.
-This reduces avoidable delay; severely constrained or lossy links still limit quality.
+Known-device connections try an alternate address after **80 ms** if the first
+attempt is still pending, with at most two concurrent attempts and fingerprint checks.
+
+### Connection modes and recovery
+
+The remote toolbar's **Connection mode** is saved per device:
+
+- **Low latency (default)** reduces bitrate first, then transmission resolution during sustained congestion, and gradually restores quality as the link recovers.
+- **Text clarity** keeps native resolution with a 30 FPS ceiling.
+- **Image quality** keeps native resolution with a 45 FPS ceiling and a higher bitrate floor.
+
+Video starts at 30 FPS with a conservative bitrate. Selected quality and custom FPS
+remain upper limits; stable VPN RTT is distinguished from queueing delay. Adaptive
+scaling preserves desktop geometry and mouse coordinates. Update both endpoints to
+enable stream-size changes and decoder recovery fully; scaling also requires a
+supported desktop renderer and is disabled during recording.
+
+Viewers have independent encoders and bitrate/FPS feedback. Slow viewers receive
+the latest captured image when sending resumes, including on a static desktop.
+Pixel encoding runs in separate bounded workers, and keyboard/mouse input continues
+to be received while video or large clipboard messages are sent. Shared CPU/GPU
+saturation and severe link congestion still limit performance. See the
+[connection tuning and verification guide](docs/weak-network-tuning.md) and
+[video performance changes](docs/performance-fixes.md) for details.
+
+Established sessions interrupted by a temporary network failure retry at 1, 2, 4,
+then 8-second intervals for about two minutes. Closing the window or cancelling
+stops retries; authentication, permission, or fingerprint errors and intentional
+disconnects do not trigger automatic retries.
+
+On Windows, the installed system-privileged server under a running background
+service is restarted after 30 seconds without video-worker progress. Normal idle
+time does not trigger recovery, and resume from sleep gets a fresh grace period.
+Recovery interrupts existing sessions; portable and UI processes do not perform
+this automatic restart. See [Windows idle/reconnect recovery](docs/idle-reconnect-recovery.md).
 
 There is no GitHub update checker, downloader, installer, or online help link in
 the application. Distribute updates manually over LAN/VPN or offline media.
 Build dependencies and repository documentation may still reference GitHub.
+See [manual update guidance](docs/automatic-updates.md) for preserving existing configuration.
 
 <a id="build-from-source"></a>
 
