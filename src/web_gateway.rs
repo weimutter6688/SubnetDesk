@@ -1400,10 +1400,15 @@ async fn websocket_upgrade(
         Ok(permit) => permit,
         Err(_) => return (StatusCode::TOO_MANY_REQUESTS, "Too many Web sessions").into_response(),
     };
-    websocket
-        .max_frame_size(MAX_WEBSOCKET_PAYLOAD_LEN)
-        .max_message_size(MAX_WEBSOCKET_PAYLOAD_LEN)
+    limit_websocket_input(websocket)
         .on_upgrade(move |socket| bridge_websocket(socket, state.server, remote_addr, permit))
+}
+
+fn limit_websocket_input(websocket: WebSocketUpgrade) -> WebSocketUpgrade {
+    // These bounds apply to reads; outgoing video retains its larger limit.
+    websocket
+        .max_frame_size(MAX_WEBSOCKET_CLIENT_PAYLOAD_LEN)
+        .max_message_size(MAX_WEBSOCKET_CLIENT_PAYLOAD_LEN)
 }
 
 async fn bridge_websocket(
@@ -1927,6 +1932,42 @@ mod tests {
         assert!(validate_websocket_payload_len(MAX_WEBSOCKET_PAYLOAD_LEN).is_ok());
         assert!(validate_websocket_payload_len(0).is_err());
         assert!(validate_websocket_payload_len(MAX_WEBSOCKET_PAYLOAD_LEN + 1).is_err());
+    }
+
+    #[tokio::test]
+    async fn websocket_rejects_oversized_client_headers_before_reading_the_body() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let result_sender = Arc::new(Mutex::new(Some(tx)));
+        let app = Router::new().route("/ws", get(move |websocket: WebSocketUpgrade| {
+            let result_sender = result_sender.clone();
+            async move {
+                limit_websocket_input(websocket).on_upgrade(move |mut socket| async move {
+                    let result = matches!(socket.recv().await, Some(Err(_)));
+                    if let Some(tx) = result_sender.lock().unwrap().take() {
+                        let _ = tx.send(result);
+                    }
+                })
+            }
+        }));
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        let result = timeout(Duration::from_secs(2), async {
+            let mut client = TcpStream::connect(address).await.unwrap();
+            client.write_all(b"GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n").await.unwrap();
+            let mut response = Vec::new();
+            while !response.ends_with(b"\r\n\r\n") {
+                response.push(client.read_u8().await.unwrap());
+            }
+            assert!(response.starts_with(b"HTTP/1.1 101"));
+            let mut header = vec![0x82, 0xff];
+            header.extend_from_slice(&((MAX_WEBSOCKET_CLIENT_PAYLOAD_LEN + 1) as u64).to_be_bytes());
+            header.extend_from_slice(&[0; 4]);
+            client.write_all(&header).await.unwrap();
+            rx.await.unwrap()
+        }).await;
+        task.abort();
+        assert!(result.unwrap(), "oversized input must fail without supplying the body");
     }
 
     #[tokio::test]
