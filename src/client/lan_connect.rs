@@ -1,3 +1,5 @@
+#![deny(warnings, clippy::all)]
+
 use hbb_common::{
     anyhow::anyhow,
     futures::{stream::FuturesUnordered, StreamExt},
@@ -104,7 +106,9 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
             Ok(address)
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         assert_eq!(winner, "lan");
     }
 

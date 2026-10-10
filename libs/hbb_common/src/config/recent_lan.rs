@@ -1,3 +1,5 @@
+#![deny(warnings, clippy::all)]
+
 use super::*;
 
 // One atomic file per verified device avoids lost updates between the UI,

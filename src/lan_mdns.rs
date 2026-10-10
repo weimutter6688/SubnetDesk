@@ -1,3 +1,5 @@
+#![deny(warnings, clippy::all)]
+
 use hbb_common::{
     anyhow::anyhow,
     config::{Config, DiscoveryPeer},
@@ -67,11 +69,7 @@ impl Announcement {
             &hostname,
             self.addresses.as_slice(),
             self.port,
-            announcement_properties(
-                &self.display_name,
-                &self.platform,
-                &self.fingerprint,
-            ),
+            announcement_properties(&self.display_name, &self.platform, &self.fingerprint),
         )
         .map_err(|err| anyhow!("Failed to create mDNS service info: {err}"))
     }
@@ -145,9 +143,7 @@ pub(super) fn spawn_browse(tx: UnboundedSender<DiscoveryPeer>) -> ResultType<()>
                     let properties = service
                         .get_properties()
                         .iter()
-                        .map(|property| {
-                            (property.key().to_owned(), property.val_str().to_owned())
-                        })
+                        .map(|property| (property.key().to_owned(), property.val_str().to_owned()))
                         .collect::<HashMap<_, _>>();
                     let addresses = service
                         .get_addresses()
@@ -233,9 +229,7 @@ fn peer_from_mdns_fields(
     }
 
     let fingerprint = properties.get("fp")?.to_ascii_lowercase();
-    if !valid_fingerprint(&fingerprint)
-        || fingerprint.eq_ignore_ascii_case(local_fingerprint)
-    {
+    if !valid_fingerprint(&fingerprint) || fingerprint.eq_ignore_ascii_case(local_fingerprint) {
         return None;
     }
 
@@ -294,7 +288,9 @@ fn peer_from_mdns_fields(
 }
 
 fn connectable_address(address: IpAddr) -> bool {
-    if address.is_loopback() || address.is_unspecified() || !crate::lan_server::source_allowed(address)
+    if address.is_loopback()
+        || address.is_unspecified()
+        || !crate::lan_server::source_allowed(address)
     {
         return false;
     }
@@ -436,7 +432,10 @@ mod tests {
     fn announcement_txt_contains_only_public_discovery_metadata() {
         let properties = announcement_properties("Office PC", "Windows", REMOTE_FINGERPRINT);
         assert_eq!(
-            properties.keys().cloned().collect::<std::collections::BTreeSet<_>>(),
+            properties
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
             ["fp", "name", "os", "v"]
                 .into_iter()
                 .map(str::to_owned)

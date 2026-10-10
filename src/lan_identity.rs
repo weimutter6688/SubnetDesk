@@ -1,3 +1,6 @@
+#![deny(warnings, clippy::all)]
+
+use crate::ui_session_interface::{LanIdentityRequest, LanSessionCredential};
 use hbb_common::{
     anyhow::{anyhow, bail},
     config::{LanIdentity, LocalConfig},
@@ -7,7 +10,6 @@ use hbb_common::{
 use serde::Serialize;
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
-use crate::ui_session_interface::{LanIdentityRequest, LanSessionCredential};
 
 const MAX_IDENTITY_NAME_LEN: usize = 64;
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
@@ -191,10 +193,6 @@ pub fn bound_identity_id(fingerprint: &str) -> String {
     LocalConfig::get_bound_lan_identity_id(fingerprint)
 }
 
-pub fn resolved_identity_id(fingerprint: &str) -> String {
-    LocalConfig::resolve_lan_identity_id(fingerprint)
-}
-
 pub fn load(identity_id: &str) -> ResultType<ResolvedLanIdentity> {
     let identity_id = validate_identity_id(identity_id)?;
     let identity = LocalConfig::get_lan_identity(&identity_id)
@@ -223,15 +221,6 @@ pub fn load(identity_id: &str) -> ResultType<ResolvedLanIdentity> {
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     bail!("LAN identities are not supported on this platform")
-}
-
-pub fn load_for_fingerprint(fingerprint: &str) -> ResultType<Option<ResolvedLanIdentity>> {
-    let identity_id = resolved_identity_id(fingerprint);
-    if identity_id.is_empty() {
-        Ok(None)
-    } else {
-        load(&identity_id).map(Some)
-    }
 }
 
 // Called on the blocking pool, after the peer's fingerprint has been verified.
@@ -278,8 +267,11 @@ fn resolve_connection_credential(
     // default account. Do not read both passwords when the first one is usable.
     if let Some((username, password)) = load_saved() {
         return Ok(Some(LanSessionCredential {
-            username, password, remember: true,
-            identity_id: String::new(), bind_identity_on_success: false,
+            username,
+            password,
+            remember: true,
+            identity_id: String::new(),
+            bind_identity_on_success: false,
         }));
     }
     if !default_id.is_empty() && default_id != bound_id {
@@ -322,50 +314,77 @@ mod tests {
 
     fn test_identity(id: &str) -> ResultType<ResolvedLanIdentity> {
         Ok(ResolvedLanIdentity {
-            id: id.to_owned(), username: id.to_owned(), password: b"test-only-password".to_vec(),
+            id: id.to_owned(),
+            username: id.to_owned(),
+            password: b"test-only-password".to_vec(),
         })
     }
 
     #[test]
     fn saved_device_password_wins_over_default_without_reading_default_secret() {
-        let saved = resolve_connection_credential(None, "", "default",
+        let saved = resolve_connection_credential(
+            None,
+            "",
+            "default",
             |_| panic!("Default credential must not be read"),
-            || Some(("device-user".to_owned(), b"test-only-password".to_vec())))
-            .unwrap().unwrap();
+            || Some(("device-user".to_owned(), b"test-only-password".to_vec())),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(saved.username, "device-user");
         assert!(saved.remember);
     }
 
     #[test]
     fn explicit_and_bound_identities_take_precedence_without_reading_saved_password() {
-        for request in [None, Some(LanIdentityRequest {
-            identity_id: "selected".to_owned(), bind_on_success: true,
-        })] {
+        for request in [
+            None,
+            Some(LanIdentityRequest {
+                identity_id: "selected".to_owned(),
+                bind_on_success: true,
+            }),
+        ] {
             let explicit = request.is_some();
-            let credential = resolve_connection_credential(request, "bound", "default",
-                test_identity, || panic!("Saved password must not be read"))
-                .unwrap().unwrap();
-            assert_eq!(credential.identity_id, if explicit { "selected" } else { "bound" });
+            let credential =
+                resolve_connection_credential(request, "bound", "default", test_identity, || {
+                    panic!("Saved password must not be read")
+                })
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                credential.identity_id,
+                if explicit { "selected" } else { "bound" }
+            );
             assert_eq!(credential.bind_identity_on_success, explicit);
         }
     }
 
     #[test]
     fn explicit_identity_failure_does_not_fall_back_to_another_account() {
-        let result = resolve_connection_credential(Some(LanIdentityRequest {
-            identity_id: "missing".to_owned(), bind_on_success: false,
-        }), "bound", "default", |_| Err(anyhow!("missing")),
-            || panic!("Explicit selection must not fall back"));
+        let result = resolve_connection_credential(
+            Some(LanIdentityRequest {
+                identity_id: "missing".to_owned(),
+                bind_on_success: false,
+            }),
+            "bound",
+            "default",
+            |_| Err(anyhow!("missing")),
+            || panic!("Explicit selection must not fall back"),
+        );
         assert!(result.is_err());
     }
 
     #[test]
     fn default_identity_is_used_only_without_a_saved_device_password() {
-        let credential = resolve_connection_credential(None, "", "default",
-            test_identity, || None).unwrap().unwrap();
+        let credential = resolve_connection_credential(None, "", "default", test_identity, || None)
+            .unwrap()
+            .unwrap();
         assert_eq!(credential.identity_id, "default");
-        assert!(resolve_connection_credential(None, "", "", test_identity, || None)
-            .unwrap().is_none());
+        assert!(
+            resolve_connection_credential(None, "", "", test_identity, || None)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

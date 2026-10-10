@@ -1,3 +1,5 @@
+#![deny(warnings, clippy::all)]
+
 use std::{
     net::{IpAddr, SocketAddr},
     str::FromStr,
@@ -186,20 +188,15 @@ fn listen_addresses() -> Vec<String> {
         .collect()
 }
 
-fn listener_signature() -> (
-    u16,
-    Vec<String>,
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    Vec<String>,
-    String,
-) {
+#[derive(PartialEq, Eq)]
+struct ListenerSignature {
+    port: u16,
+    addresses: Vec<String>,
+    policy: Vec<String>,
+    certificate_addresses: Vec<String>,
+}
+
+fn listener_signature() -> ListenerSignature {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let web_certificate_addresses = if crate::web_gateway::is_enabled() {
         crate::web_gateway::certificate_address_signature()
@@ -208,20 +205,25 @@ fn listener_signature() -> (
     };
     #[cfg(any(target_os = "android", target_os = "ios"))]
     let web_certificate_addresses = Vec::new();
-    (
-        listen_port(),
-        listen_addresses(),
-        Config::get_option("lan-allowed-networks"),
-        Config::get_option("web-access-enabled"),
-        Config::get_option("web-listen-port"),
-        Config::get_option("web-certificate-path"),
-        Config::get_option("web-private-key-path"),
-        Config::get_option("web-listen-addresses"),
-        Config::get_option("web-allowed-networks"),
-        Config::get_option("web-allowed-hosts"),
-        web_certificate_addresses,
-        Config::get_option("web-permission-profile"),
-    )
+    ListenerSignature {
+        port: listen_port(),
+        addresses: listen_addresses(),
+        policy: [
+            "lan-allowed-networks",
+            "web-access-enabled",
+            "web-listen-port",
+            "web-certificate-path",
+            "web-private-key-path",
+            "web-listen-addresses",
+            "web-allowed-networks",
+            "web-allowed-hosts",
+            "web-permission-profile",
+        ]
+        .into_iter()
+        .map(Config::get_option)
+        .collect(),
+        certificate_addresses: web_certificate_addresses,
+    }
 }
 
 #[cfg(not(target_os = "ios"))]
@@ -360,16 +362,34 @@ mod tests {
 
     #[test]
     fn default_policy_has_expected_private_networks() {
-        assert!(source_allowed_with("192.168.1.20".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
+        assert!(source_allowed_with(
+            "192.168.1.20".parse().unwrap(),
+            hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS
+        ));
         assert!(source_allowed_with(
             "::ffff:192.168.1.20".parse().unwrap(),
             hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS
         ));
-        assert!(source_allowed_with("::ffff:127.0.0.1".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
-        assert!(source_allowed_with("100.64.10.2".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
-        assert!(source_allowed_with("fd00::20".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
-        assert!(!source_allowed_with("8.8.8.8".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
-        assert!(!source_allowed_with("::ffff:8.8.8.8".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
+        assert!(source_allowed_with(
+            "::ffff:127.0.0.1".parse().unwrap(),
+            hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS
+        ));
+        assert!(source_allowed_with(
+            "100.64.10.2".parse().unwrap(),
+            hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS
+        ));
+        assert!(source_allowed_with(
+            "fd00::20".parse().unwrap(),
+            hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS
+        ));
+        assert!(!source_allowed_with(
+            "8.8.8.8".parse().unwrap(),
+            hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS
+        ));
+        assert!(!source_allowed_with(
+            "::ffff:8.8.8.8".parse().unwrap(),
+            hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS
+        ));
         assert!(source_allowed_with(
             "10.23.1.9".parse().unwrap(),
             "10.23.0.0/16"
@@ -386,16 +406,38 @@ mod tests {
 
     #[test]
     fn removed_networks_and_empty_policy_stay_denied() {
-        for ip in ["10.0.0.1", "172.16.0.1", "192.168.1.1", "100.81.211.45", "fd7a:115c:a1e0::1", "::1"] {
+        for ip in [
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "100.81.211.45",
+            "fd7a:115c:a1e0::1",
+            "::1",
+        ] {
             assert!(!source_allowed_with(ip.parse().unwrap(), ""));
             assert!(!source_allowed_with(ip.parse().unwrap(), "invalid"));
         }
-        assert!(!source_allowed_with("100.81.211.45".parse().unwrap(), "192.168.0.0/16"));
-        assert!(source_allowed_with("100.81.211.45".parse().unwrap(), "192.168.0.0/16\n100.64.0.0/10"));
-        assert!(source_allowed_with("fd7a:115c:a1e0::1".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
-        assert!(!source_allowed_with("100.128.0.1".parse().unwrap(), hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS));
+        assert!(!source_allowed_with(
+            "100.81.211.45".parse().unwrap(),
+            "192.168.0.0/16"
+        ));
+        assert!(source_allowed_with(
+            "100.81.211.45".parse().unwrap(),
+            "192.168.0.0/16\n100.64.0.0/10"
+        ));
+        assert!(source_allowed_with(
+            "fd7a:115c:a1e0::1".parse().unwrap(),
+            hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS
+        ));
+        assert!(!source_allowed_with(
+            "100.128.0.1".parse().unwrap(),
+            hbb_common::config::DEFAULT_LAN_ALLOWED_NETWORKS
+        ));
         assert_eq!(normalize_allowed_networks(" \n ").unwrap(), "");
-        assert_eq!(normalize_allowed_networks("10.0.0.0/8\r\n100.64.0.0/10").unwrap(), "10.0.0.0/8,100.64.0.0/10");
+        assert_eq!(
+            normalize_allowed_networks("10.0.0.0/8\r\n100.64.0.0/10").unwrap(),
+            "10.0.0.0/8,100.64.0.0/10"
+        );
     }
 
     #[test]

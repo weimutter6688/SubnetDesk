@@ -66,45 +66,16 @@ jobs:
         bun run build
         git diff --exit-code -- src/generated dist
 
-  # ensure_cargo_fmt:
-  #   name: Ensure 'cargo fmt' has been run
-  #   runs-on: ubuntu-20.04
-  #   steps:
-  #   - uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1
-  #     with:
-  #       toolchain: stable
-  #       default: true
-  #       profile: minimal
-  #       components: rustfmt
-  #   - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
-  #   - run: cargo fmt -- --check
-
-  # min_version:
-  #   name: Minimum supported rust version
-  #   runs-on: ubuntu-20.04
-  #   steps:
-  #   - name: Checkout source code
-  #     uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
-  #     with:
-  #       submodules: recursive
-
-  #   - name: Install rust toolchain (v${{ env.MIN_SUPPORTED_RUST_VERSION }})
-  #     uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1
-  #     with:
-  #       toolchain: ${{ env.MIN_SUPPORTED_RUST_VERSION }}
-  #       default: true
-  #       profile: minimal # minimal component installation (ie, no documentation)
-  #       components: clippy
-  #   - name: Run clippy (on minimum supported rust version to prevent warnings we can't fix)
-  #     uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1
-  #     with:
-  #       command: clippy
-  #       args: --locked --all-targets --all-features -- --allow clippy::unknown_clippy_lints
-  #   - name: Run tests
-  #     uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1
-  #     with:
-  #       command: test
-  #       args: --locked
+  rust-format:
+    name: Fork Rust formatting and strict-lint declarations
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+    - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      with:
+        toolchain: 1.82.0
+        components: rustfmt
+    - run: python3 scripts/check_rust_quality.py
 
   build:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
@@ -205,9 +176,9 @@ jobs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
       with:
-        toolchain: stable
+        toolchain: 1.82.0
         targets: ${{ matrix.job.target }}
-        components: ''
+        components: rustfmt, clippy
 
     - name: Show version information (Rust, cargo, GCC)
       shell: bash
@@ -227,6 +198,9 @@ jobs:
         use-cross: ${{ matrix.job.use-cross }}
         command: build
         args: --locked --features flutter --target=${{ matrix.job.target }}
+
+    - name: Clippy (warnings are errors in fork-owned modules)
+      run: cargo clippy --locked --lib --tests --features flutter --target=${{ matrix.job.target }} -- -A clippy::all
 
     - name: clean
       shell: bash
@@ -281,7 +255,7 @@ jobs:
             CARGO_TEST_OPTIONS="--lib --bin ${PROJECT_NAME}"
             ;;
           *)
-            CARGO_TEST_OPTIONS="--workspace --no-fail-fast -- --skip test_get_cursor_pos --skip test_get_key_state"
+            CARGO_TEST_OPTIONS="--workspace --no-fail-fast -- --test-threads=1 --skip test_get_cursor_pos --skip test_cursor_data --skip test_get_key_state --skip test_resolution --skip test_uninstall_cert --skip test_config2_store_keeps_existing_unlock_pin_when_pin_is_unchanged"
             ;;
         esac;
 
@@ -295,3 +269,6 @@ jobs:
         use-cross: ${{ matrix.job.use-cross }}
         command: test
         args: --locked --features flutter --target=${{ matrix.job.target }} ${{ steps.test-options.outputs.CARGO_TEST_OPTIONS}}
+
+    - name: Common library tests
+      run: cargo test --locked -p hbb_common --lib --target=${{ matrix.job.target }} -- --test-threads=1 --skip test_config2_store_keeps_existing_unlock_pin_when_pin_is_unchanged

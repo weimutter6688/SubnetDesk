@@ -55,6 +55,8 @@ IOS_TARGETS = {
 
 
 def sha256(path: Path) -> str:
+    if path.suffix == ".svg":
+        return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -176,10 +178,10 @@ def generated_paths() -> list[Path]:
 
 def write_manifest() -> None:
     payload = {
-        "source": str(SOURCE.relative_to(ROOT)),
+        "source": SOURCE.relative_to(ROOT).as_posix(),
         "source_sha256": sha256(SOURCE),
         "generated": {
-            str(path.relative_to(ROOT)): sha256(path) for path in generated_paths()
+            path.relative_to(ROOT).as_posix(): sha256(path) for path in generated_paths()
         },
     }
     MANIFEST.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -246,10 +248,10 @@ def check() -> None:
         raise SystemExit("SubnetDesk icon source changed; regenerate platform assets")
     expected = payload.get("generated", {})
     actual_paths = generated_paths()
-    if set(expected) != {str(path.relative_to(ROOT)) for path in actual_paths}:
+    if set(expected) != {path.relative_to(ROOT).as_posix() for path in actual_paths}:
         raise SystemExit("SubnetDesk icon manifest target list is out of date")
     for path in actual_paths:
-        relative = str(path.relative_to(ROOT))
+        relative = path.relative_to(ROOT).as_posix()
         if not path.is_file() or sha256(path) != expected[relative]:
             raise SystemExit(f"generated SubnetDesk icon is stale: {relative}")
     print(f"SubnetDesk icon check passed ({len(actual_paths)} assets).")

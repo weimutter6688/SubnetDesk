@@ -1,3 +1,5 @@
+#![deny(warnings, clippy::all)]
+
 use bytes::Bytes;
 use hbb_common::{
     anyhow::{anyhow, bail},
@@ -260,7 +262,9 @@ mod tests {
                 } else {
                     server_handshake_with_identity(&mut stream, &secret, &public).await
                 }
-            }).await.unwrap();
+            })
+            .await
+            .unwrap();
             assert!(result.unwrap_err().to_string().contains("Too big packet"));
         }
     }
@@ -274,16 +278,23 @@ mod tests {
         let mut server = Stream::from_framed(tcp::FramedStream::from(server_socket, address));
         let mut client = Stream::from_framed(tcp::FramedStream::from(client_socket, address));
         let server_task = async {
-            server_handshake_with_identity(&mut server, &secret, &public).await.unwrap();
+            server_handshake_with_identity(&mut server, &secret, &public)
+                .await
+                .unwrap();
             server.next().await.unwrap().unwrap_err()
         };
         let client_task = async {
             client_handshake(&mut client).await.unwrap();
-            client.send_raw(vec![0; MAX_AUTH_PACKET_LENGTH + 1]).await.unwrap();
+            client
+                .send_raw(vec![0; MAX_AUTH_PACKET_LENGTH + 1])
+                .await
+                .unwrap();
         };
         let (error, ()) = tokio::time::timeout(Duration::from_secs(1), async {
             tokio::join!(server_task, client_task)
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         assert!(error.to_string().contains("Too big packet"));
     }
 

@@ -1,3 +1,5 @@
+#![deny(warnings, clippy::all)]
+
 //! Bounded, best-effort diagnostic exports. Never include configuration files.
 use hbb_common::{config::Config, regex::Regex, ResultType};
 use std::{
@@ -35,36 +37,35 @@ impl Redactor {
     }
 
     fn text(&self, input: &str) -> String {
-        input
-            .lines()
-            .map(|line| {
-                if self.secret.is_match(line) {
-                    return "[sensitive log line removed]\n".to_owned();
-                }
-                let line = if self.home.is_empty() {
-                    line.to_owned()
-                } else {
-                    line.replace(&self.home, "<HOME>")
-                };
-                format!(
-                    "{}\n",
-                    self.addresses
-                        .replace_all(&line, |caps: &hbb_common::regex::Captures<'_>| {
-                            let value = &caps[0];
-                            // IPv6 candidates also match clock times. Preserve those unless
-                            // they parse as an actual address (or a MAC address).
-                            if value.matches(':').count() > 1
-                                && value.parse::<std::net::Ipv6Addr>().is_err()
-                                && !(value.len() == 17 && value.matches(':').count() == 5)
-                            {
-                                value.to_owned()
-                            } else {
-                                "<REDACTED>".to_owned()
-                            }
-                        })
-                )
-            })
-            .collect()
+        input.lines().fold(String::new(), |mut output, line| {
+            if self.secret.is_match(line) {
+                output.push_str("[sensitive log line removed]\n");
+                return output;
+            }
+            let line = if self.home.is_empty() {
+                line.to_owned()
+            } else {
+                line.replace(&self.home, "<HOME>")
+            };
+            output.push_str(&self.addresses.replace_all(
+                &line,
+                |caps: &hbb_common::regex::Captures<'_>| {
+                    let value = &caps[0];
+                    // IPv6 candidates also match clock times. Preserve those unless
+                    // they parse as an actual address (or a MAC address).
+                    if value.matches(':').count() > 1
+                        && value.parse::<std::net::Ipv6Addr>().is_err()
+                        && !(value.len() == 17 && value.matches(':').count() == 5)
+                    {
+                        value.to_owned()
+                    } else {
+                        "<REDACTED>".to_owned()
+                    }
+                },
+            ));
+            output.push('\n');
+            output
+        })
     }
 }
 

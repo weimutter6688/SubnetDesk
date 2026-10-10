@@ -1,3 +1,5 @@
+#![deny(warnings, clippy::all)]
+
 use crate::{
     anyhow::anyhow,
     futures::{stream::FuturesUnordered, StreamExt},
