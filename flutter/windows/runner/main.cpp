@@ -23,10 +23,10 @@ const wchar_t* getWindowClassName();
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command)
 {
-  HINSTANCE hInstance = LoadLibraryA("libsubnetdesk_weimutter6688.dll");
+  HINSTANCE hInstance = LoadLibraryA("libsubnetdesk.dll");
   if (!hInstance)
   {
-    std::cout << "Failed to load libsubnetdesk_weimutter6688.dll." << std::endl;
+    std::cout << "Failed to load libsubnetdesk.dll." << std::endl;
     return EXIT_FAILURE;
   }
   FUNC_RUSTDESK_CORE_MAIN rustdesk_core_main =

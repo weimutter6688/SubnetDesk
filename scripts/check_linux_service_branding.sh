@@ -21,7 +21,7 @@ reject_pattern() {
   fi
 }
 
-service_resource=res/subnetdesk-weimutter6688.service
+service_resource=res/subnetdesk.service
 debian_scripts=(
   res/DEBIAN/preinst
   res/DEBIAN/postinst
@@ -46,34 +46,34 @@ if [[ -e res/rustdesk.service ]]; then
 fi
 
 require_fixed "$service_resource" 'Description=SubnetDesk'
-require_fixed "$service_resource" 'ExecStart=/usr/bin/subnetdesk-weimutter6688 --service'
-require_fixed "$service_resource" 'ExecStop=/usr/bin/pkill -f "subnetdesk-weimutter6688 --"'
-require_fixed build.py 'Package: subnetdesk-weimutter6688'
-require_fixed flutter/linux/CMakeLists.txt 'set(BINARY_NAME "subnetdesk-weimutter6688")'
-require_fixed res/rustdesk.desktop 'Exec=subnetdesk-weimutter6688 %u'
-require_fixed res/rustdesk.desktop 'Icon=subnetdesk-weimutter6688'
-require_fixed res/DEBIAN/postinst '/usr/lib/systemd/system/subnetdesk-weimutter6688.service'
-require_fixed res/DEBIAN/postinst 'systemctl enable subnetdesk-weimutter6688'
-require_fixed res/DEBIAN/postinst 'systemctl start subnetdesk-weimutter6688'
-require_fixed res/DEBIAN/preinst 'systemctl stop subnetdesk-weimutter6688'
-require_fixed res/DEBIAN/prerm 'systemctl stop subnetdesk-weimutter6688'
-require_fixed res/DEBIAN/prerm 'systemctl disable subnetdesk-weimutter6688'
+require_fixed "$service_resource" 'ExecStart=/usr/bin/subnetdesk --service'
+require_fixed "$service_resource" 'ExecStop=/usr/bin/pkill -f "subnetdesk --"'
+require_fixed build.py 'Package: subnetdesk'
+require_fixed flutter/linux/CMakeLists.txt 'set(BINARY_NAME "subnetdesk")'
+require_fixed res/rustdesk.desktop 'Exec=subnetdesk %u'
+require_fixed res/rustdesk.desktop 'Icon=subnetdesk'
+require_fixed res/DEBIAN/postinst '/usr/lib/systemd/system/subnetdesk.service'
+require_fixed res/DEBIAN/postinst 'systemctl enable subnetdesk'
+require_fixed res/DEBIAN/postinst 'systemctl start subnetdesk'
+require_fixed res/DEBIAN/preinst 'systemctl stop subnetdesk'
+require_fixed res/DEBIAN/prerm 'systemctl stop subnetdesk'
+require_fixed res/DEBIAN/prerm 'systemctl disable subnetdesk'
 
 for file in "${rpm_specs[@]}"; do
-  require_fixed "$file" '$HBB/res/subnetdesk-weimutter6688.service'
-  require_fixed "$file" '/etc/systemd/system/subnetdesk-weimutter6688.service'
-  require_fixed "$file" 'systemctl enable subnetdesk-weimutter6688'
-  require_fixed "$file" 'systemctl start subnetdesk-weimutter6688'
-  require_fixed "$file" 'systemctl stop subnetdesk-weimutter6688'
-  require_fixed "$file" 'systemctl disable subnetdesk-weimutter6688'
+  require_fixed "$file" '$HBB/res/subnetdesk.service'
+  require_fixed "$file" '/etc/systemd/system/subnetdesk.service'
+  require_fixed "$file" 'systemctl enable subnetdesk'
+  require_fixed "$file" 'systemctl start subnetdesk'
+  require_fixed "$file" 'systemctl stop subnetdesk'
+  require_fixed "$file" 'systemctl disable subnetdesk'
 done
 
-require_fixed res/PKGBUILD '$HBB/res/subnetdesk-weimutter6688.service'
-require_fixed res/pacman_install '/etc/systemd/system/subnetdesk-weimutter6688.service'
-require_fixed res/pacman_install 'systemctl enable subnetdesk-weimutter6688'
-require_fixed res/pacman_install 'systemctl start subnetdesk-weimutter6688'
-require_fixed res/pacman_install 'systemctl stop subnetdesk-weimutter6688'
-require_fixed res/pacman_install 'systemctl disable subnetdesk-weimutter6688'
+require_fixed res/PKGBUILD '$HBB/res/subnetdesk.service'
+require_fixed res/pacman_install '/etc/systemd/system/subnetdesk.service'
+require_fixed res/pacman_install 'systemctl enable subnetdesk'
+require_fixed res/pacman_install 'systemctl start subnetdesk'
+require_fixed res/pacman_install 'systemctl stop subnetdesk'
+require_fixed res/pacman_install 'systemctl disable subnetdesk'
 
 reject_pattern 'res/rustdesk\.service' "${packaging_files[@]}"
 reject_pattern 'cp .*rustdesk\.service .*/(etc|usr/lib)/systemd' "${packaging_files[@]}"

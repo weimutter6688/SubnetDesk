@@ -11,7 +11,7 @@
 
 namespace {
 
-constexpr const wchar_t kWindowClassName[] = L"SUBNETDESK_WEIMUTTER6688_WIN32_WINDOW";
+constexpr const wchar_t kWindowClassName[] = L"SUBNETDESK_WIN32_WINDOW";
 
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;

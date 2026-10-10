@@ -206,7 +206,7 @@ UINT __stdcall RemoveRuntimeGeneratedFiles(
     }
 
     WcaLog(LOGMSG_STANDARD, "Removing runtime-generated files from install folder: %ls", installFolder);
-    DeleteRuntimeGeneratedFile(installFolder, L"RuntimeBroker_subnetdesk_weimutter6688.exe");
+    DeleteRuntimeGeneratedFile(installFolder, L"RuntimeBroker_subnetdesk.exe");
 
 LExit:
     ReleaseStr(pwzData);

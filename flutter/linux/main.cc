@@ -1,16 +1,16 @@
 #include <dlfcn.h>
 #include "my_application.h"
 
-#define RUSTDESK_LIB_PATH "libsubnetdesk_weimutter6688.so"
+#define RUSTDESK_LIB_PATH "libsubnetdesk.so"
 typedef bool (*RustDeskCoreMain)();
 bool gIsConnectionManager = false;
 
 void print_help_install_pkg(const char* so);
 
 bool flutter_rustdesk_core_main() {
-   void* libsubnetdesk_weimutter6688 = dlopen(RUSTDESK_LIB_PATH, RTLD_LAZY);
-   if (!libsubnetdesk_weimutter6688) {
-      fprintf(stderr,"Failed to load \"libsubnetdesk_weimutter6688.so\"\n");
+   void* libsubnetdesk = dlopen(RUSTDESK_LIB_PATH, RTLD_LAZY);
+   if (!libsubnetdesk) {
+      fprintf(stderr,"Failed to load \"libsubnetdesk.so\"\n");
       char* error;
       if ((error = dlerror()) != nullptr) {
         fprintf(stderr, "%s\n", error);
@@ -24,7 +24,7 @@ bool flutter_rustdesk_core_main() {
       }
      return false;
    }
-   auto core_main = (RustDeskCoreMain) dlsym(libsubnetdesk_weimutter6688,"rustdesk_core_main");
+   auto core_main = (RustDeskCoreMain) dlsym(libsubnetdesk,"rustdesk_core_main");
    char* error;
    if ((error = dlerror()) != nullptr) {
        fprintf(stderr, "Program entry \"rustdesk_core_main\" is not found: %s\n", error);

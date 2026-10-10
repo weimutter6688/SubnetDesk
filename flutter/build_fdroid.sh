@@ -399,8 +399,8 @@ build)
 
 	mkdir -p "flutter/android/app/src/main/jniLibs/${ANDROID_ABI}"
 
-	cp "target/${RUST_TARGET}/release/liblibsubnetdesk_weimutter6688.so" \
-		"flutter/android/app/src/main/jniLibs/${ANDROID_ABI}/libsubnetdesk_weimutter6688.so"
+	cp "target/${RUST_TARGET}/release/liblibsubnetdesk.so" \
+		"flutter/android/app/src/main/jniLibs/${ANDROID_ABI}/libsubnetdesk.so"
 
 	cp "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${NDK_TARGET}/libc++_shared.so" \
 		"flutter/android/app/src/main/jniLibs/${ANDROID_ABI}/"

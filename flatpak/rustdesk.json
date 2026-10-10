@@ -1,12 +1,12 @@
 {
-  "id": "io.github.weimutter6688.SubnetDesk",
+  "id": "com.subnetdesk.SubnetDesk",
   "runtime": "org.freedesktop.Platform",
   "runtime-version": "24.08",
   "sdk": "org.freedesktop.Sdk",
-  "command": "subnetdesk-weimutter6688",
+  "command": "subnetdesk",
   "cleanup": ["/include", "/lib/pkgconfig", "/share/gtk-doc"],
-  "rename-desktop-file": "subnetdesk-weimutter6688.desktop",
-  "rename-icon": "subnetdesk-weimutter6688",
+  "rename-desktop-file": "subnetdesk.desktop",
+  "rename-icon": "subnetdesk",
   "modules": [
     "shared-modules/libappindicator/libappindicator-gtk3-12.10.json",
     {
@@ -34,21 +34,21 @@
       ]
     },
     {
-      "name": "subnetdesk-weimutter6688",
+      "name": "subnetdesk",
       "buildsystem": "simple",
       "build-commands": [
-        "bsdtar -Oxf subnetdesk-weimutter6688.deb data.tar.xz | bsdtar -xf -",
+        "bsdtar -Oxf subnetdesk.deb data.tar.xz | bsdtar -xf -",
         "cp -r usr/* /app/",
-        "mkdir -p /app/bin && ln -s /app/share/subnetdesk-weimutter6688/subnetdesk-weimutter6688 /app/bin/subnetdesk-weimutter6688"
+        "mkdir -p /app/bin && ln -s /app/share/subnetdesk/subnetdesk /app/bin/subnetdesk"
       ],
       "sources": [
         {
           "type": "file",
-          "path": "subnetdesk-weimutter6688.deb"
+          "path": "subnetdesk.deb"
         },
         {
           "type": "file",
-          "path": "io.github.weimutter6688.SubnetDesk.metainfo.xml"
+          "path": "com.subnetdesk.SubnetDesk.metainfo.xml"
         }
       ]
     }

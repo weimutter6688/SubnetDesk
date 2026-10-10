@@ -37,7 +37,7 @@ class RelativeMouseState {
 }
 
 private final class LocalNetworkPermissionProbe {
-    private let queue = DispatchQueue(label: "io.github.weimutter6688.subnetdesk.local-network-permission")
+    private let queue = DispatchQueue(label: "com.subnetdesk.app.local-network-permission")
     private let serviceName = "SubnetDesk-\(UUID().uuidString)"
     private var browser: NWBrowser?
     private var listener: NWListener?
@@ -56,7 +56,7 @@ private final class LocalNetworkPermissionProbe {
                 let listener = try NWListener(using: parameters)
                 listener.service = NWListener.Service(
                     name: self.serviceName,
-                    type: "_sd-w6688._tcp"
+                    type: "_subnetdesk._tcp"
                 )
                 listener.newConnectionHandler = { connection in
                     connection.cancel()
@@ -67,7 +67,7 @@ private final class LocalNetworkPermissionProbe {
                 self.listener = listener
 
                 let browser = NWBrowser(
-                    for: .bonjour(type: "_sd-w6688._tcp", domain: nil),
+                    for: .bonjour(type: "_subnetdesk._tcp", domain: nil),
                     using: parameters
                 )
                 browser.stateUpdateHandler = { [weak self] state in

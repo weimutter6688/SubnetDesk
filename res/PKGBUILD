@@ -1,4 +1,4 @@
-pkgname=subnetdesk-weimutter6688
+pkgname=subnetdesk
 pkgver=1.3.0
 pkgrel=0
 epoch=
@@ -23,13 +23,13 @@ md5sums=() #generate with 'makepkg -g'
 
 package() {
   if [[ ${FLUTTER} ]]; then
-	  mkdir -p "${pkgdir}/usr/share/subnetdesk-weimutter6688" && cp -r ${HBB}/flutter/build/linux/x64/release/bundle/* -t "${pkgdir}/usr/share/subnetdesk-weimutter6688"
+	  mkdir -p "${pkgdir}/usr/share/subnetdesk" && cp -r ${HBB}/flutter/build/linux/x64/release/bundle/* -t "${pkgdir}/usr/share/subnetdesk"
   fi
   mkdir -p "${pkgdir}/usr/bin"
-  pushd ${pkgdir} && ln -s /usr/share/subnetdesk-weimutter6688/subnetdesk-weimutter6688 usr/bin/subnetdesk-weimutter6688 && popd
-  install -Dm 644 $HBB/res/subnetdesk-weimutter6688.service -t "${pkgdir}/usr/share/subnetdesk-weimutter6688/files"
-  install -Dm 644 $HBB/res/rustdesk.desktop "${pkgdir}/usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688.desktop"
-  install -Dm 644 $HBB/res/rustdesk-link.desktop "${pkgdir}/usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688-link.desktop"
-  install -Dm 644 $HBB/res/128x128@2x.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/subnetdesk-weimutter6688.png"
-  install -Dm 644 $HBB/res/scalable.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/subnetdesk-weimutter6688.svg"
+  pushd ${pkgdir} && ln -s /usr/share/subnetdesk/subnetdesk usr/bin/subnetdesk && popd
+  install -Dm 644 $HBB/res/subnetdesk.service -t "${pkgdir}/usr/share/subnetdesk/files"
+  install -Dm 644 $HBB/res/rustdesk.desktop "${pkgdir}/usr/share/subnetdesk/files/subnetdesk.desktop"
+  install -Dm 644 $HBB/res/rustdesk-link.desktop "${pkgdir}/usr/share/subnetdesk/files/subnetdesk-link.desktop"
+  install -Dm 644 $HBB/res/128x128@2x.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/subnetdesk.png"
+  install -Dm 644 $HBB/res/scalable.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/subnetdesk.svg"
 }

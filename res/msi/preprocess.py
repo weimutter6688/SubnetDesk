@@ -73,7 +73,7 @@ def make_parser():
         help='Connection type, e.g. "incoming", "outgoing". Default is empty, means incoming-outgoing',
     )
     parser.add_argument(
-        "--app-name", type=str, default="SubnetDesk-weimutter6688", help="The internal executable and installation identity."
+        "--app-name", type=str, default="SubnetDesk", help="The internal executable and installation identity."
     )
     parser.add_argument(
         "--display-name", type=str, default="SubnetDesk", help="The visible product name."

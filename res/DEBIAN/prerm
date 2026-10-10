@@ -7,20 +7,20 @@ case $1 in
 		INITSYS=$(ls -al /proc/1/exe | awk -F' ' '{print $NF}' | awk -F'/' '{print $NF}')
 
 		if [ "systemd" == "${INITSYS}" ]; then
-			systemctl stop subnetdesk-weimutter6688 || true
-			systemctl disable subnetdesk-weimutter6688 || true
-			rm -f /etc/systemd/system/subnetdesk-weimutter6688.service \
-				/usr/lib/systemd/system/subnetdesk-weimutter6688.service
+			systemctl stop subnetdesk || true
+			systemctl disable subnetdesk || true
+			rm -f /etc/systemd/system/subnetdesk.service \
+				/usr/lib/systemd/system/subnetdesk.service
 
-			serverUser=$(ps -ef | grep -E 'subnetdesk-weimutter6688 +--server' | grep -v 'sudo ' | awk '{print $1}' | head -1)
+			serverUser=$(ps -ef | grep -E 'subnetdesk +--server' | grep -v 'sudo ' | awk '{print $1}' | head -1)
 			if [ "$serverUser" != "" ] && [ "$serverUser" != "root" ]
 			then
-				systemctl --machine=${serverUser}@.host --user stop subnetdesk-weimutter6688 >/dev/null 2>&1 || true
+				systemctl --machine=${serverUser}@.host --user stop subnetdesk >/dev/null 2>&1 || true
 			fi
-			rm /usr/lib/systemd/user/subnetdesk-weimutter6688.service >/dev/null 2>&1 || true
+			rm /usr/lib/systemd/user/subnetdesk.service >/dev/null 2>&1 || true
 			systemctl daemon-reload
 		fi
-		rm -f /usr/bin/subnetdesk-weimutter6688
+		rm -f /usr/bin/subnetdesk
         ;;
 esac
 

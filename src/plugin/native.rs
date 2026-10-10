@@ -10,10 +10,10 @@ use super::{
     errno::ERR_NOT_HANDLED,
     native_handlers::{Callable, NATIVE_HANDLERS_REGISTRAR},
 };
-/// The native returned value from libsubnetdesk_weimutter6688 native.
+/// The native returned value from libsubnetdesk native.
 ///
 /// [Note]
-/// The data is owned by libsubnetdesk_weimutter6688.
+/// The data is owned by libsubnetdesk.
 #[repr(C)]
 pub struct NativeReturnValue {
     pub return_type: c_int,

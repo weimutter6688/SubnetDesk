@@ -331,9 +331,9 @@ def get_features(args):
         # And only on the deb branch. The other three Linux paths (pacman/yum/zypper) package
         # straight from `target/release` without bundling libdrmtap, without the rename, without
         # Conflicts/Provides and without assert_staged_binary_is_drm() -- so they would emit a
-        # package NAMED `subnetdesk-weimutter6688` carrying the consent-bypass backend and the root-side uinput
+        # package NAMED `subnetdesk` carrying the consent-bypass backend and the root-side uinput
         # injection. The separate package name is the informed consent this feature rests on
-        # (README "DRM capture" section), and it is the thing a `zypper install subnetdesk-weimutter6688`-style
+        # (README "DRM capture" section), and it is the thing a `zypper install subnetdesk`-style
         # install would silently skip. Refuse early and loudly instead.
         if linux_packaging_branch() != 'deb':
             raise Exception(
@@ -359,7 +359,7 @@ def generate_control_file(version):
     control_file_path = "../res/DEBIAN/control"
     system2('/bin/rm -rf %s' % control_file_path)
 
-    content = """Package: subnetdesk-weimutter6688
+    content = """Package: subnetdesk
 Section: net
 Priority: optional
 Version: %s
@@ -568,7 +568,7 @@ def _assert_so_has_egl(so_path):
             'libgles2-mesa-dev; Arch: mesa libglvnd).')
 
 
-DRM_PACKAGE_NAME = 'subnetdesk-weimutter6688-unattended-wayland'
+DRM_PACKAGE_NAME = 'subnetdesk-unattended-wayland'
 
 
 def assert_so_satisfies_the_runtime_abi_gate(so_path):
@@ -638,7 +638,7 @@ def stage_libdrmtap_into_deb(so_path):
 
 def _max_glibc_minor(path):
     # Read from .dynstr rather than via objdump so packaging needs no binutils; chunked because
-    # libsubnetdesk_weimutter6688.so is ~45 MB.
+    # libsubnetdesk.so is ~45 MB.
     best = 0
     with open(path, 'rb') as f:
         tail = b''
@@ -655,8 +655,8 @@ def measured_glibc_floor():
     # libdrmtap is built on a newer base than the rest of the deb, so the floor is whichever staged
     # object is higher -- and it moves whenever either base does.
     paths = [p for p in glob.glob('tmpdeb/usr/lib/rustdesk/libdrmtap.so.0.*')
-             + glob.glob('tmpdeb/usr/share/subnetdesk-weimutter6688/lib/libsubnetdesk_weimutter6688.so')
-             + glob.glob('tmpdeb/usr/share/subnetdesk-weimutter6688/subnetdesk-weimutter6688')
+             + glob.glob('tmpdeb/usr/share/subnetdesk/lib/libsubnetdesk.so')
+             + glob.glob('tmpdeb/usr/share/subnetdesk/subnetdesk')
              if os.path.isfile(p) and not os.path.islink(p)]
     minor = max((_max_glibc_minor(p) for p in paths), default=0)
     if not minor:
@@ -680,9 +680,9 @@ def retarget_control_to_drm_variant():
         lines = f.readlines()
     out = []
     for line in lines:
-        if line.startswith('Package: subnetdesk-weimutter6688'):
+        if line.startswith('Package: subnetdesk'):
             out.append(f'Package: {DRM_PACKAGE_NAME}\n')
-            out.append('Conflicts: subnetdesk-weimutter6688\nReplaces: subnetdesk-weimutter6688\nProvides: subnetdesk-weimutter6688\n')
+            out.append('Conflicts: subnetdesk\nReplaces: subnetdesk\nProvides: subnetdesk\n')
         elif line.startswith('Depends:'):
             # 2.4.101 is where drmModeGetFB2 landed; below it libdrmtap loads and can never capture.
             out.append(line.rstrip('\n') + ', libdrm2 (>= 2.4.101), libegl1, libgles2, '
@@ -690,7 +690,7 @@ def retarget_control_to_drm_variant():
         else:
             out.append(line)
     body = ''.join(out)
-    # Fail loudly rather than silently shipping a package that says `subnetdesk-weimutter6688`: a stock control
+    # Fail loudly rather than silently shipping a package that says `subnetdesk`: a stock control
     # file that stopped matching either anchor would otherwise produce a variant deb wearing the
     # stock name.
     if f'Package: {DRM_PACKAGE_NAME}\n' not in body or 'libegl1' not in body:
@@ -706,35 +706,35 @@ def build_flutter_deb(version, features):
     os.chdir('flutter')
     system2('flutter build linux --release')
     system2('mkdir -p tmpdeb/usr/bin/')
-    system2('mkdir -p tmpdeb/usr/share/subnetdesk-weimutter6688')
-    system2('mkdir -p tmpdeb/etc/subnetdesk-weimutter6688/')
+    system2('mkdir -p tmpdeb/usr/share/subnetdesk')
+    system2('mkdir -p tmpdeb/etc/subnetdesk/')
     system2('mkdir -p tmpdeb/etc/pam.d/')
-    system2('mkdir -p tmpdeb/usr/share/subnetdesk-weimutter6688/files/systemd/')
+    system2('mkdir -p tmpdeb/usr/share/subnetdesk/files/systemd/')
     system2('mkdir -p tmpdeb/usr/share/icons/hicolor/256x256/apps/')
     system2('mkdir -p tmpdeb/usr/share/icons/hicolor/scalable/apps/')
     system2('mkdir -p tmpdeb/usr/share/applications/')
     system2('mkdir -p tmpdeb/usr/share/polkit-1/actions')
-    system2('rm tmpdeb/usr/bin/subnetdesk-weimutter6688 || true')
+    system2('rm tmpdeb/usr/bin/subnetdesk || true')
     system2(
-        f'cp -r {flutter_build_dir}/* tmpdeb/usr/share/subnetdesk-weimutter6688/')
+        f'cp -r {flutter_build_dir}/* tmpdeb/usr/share/subnetdesk/')
     system2(
-        'cp ../res/subnetdesk-weimutter6688.service tmpdeb/usr/share/subnetdesk-weimutter6688/files/systemd/')
+        'cp ../res/subnetdesk.service tmpdeb/usr/share/subnetdesk/files/systemd/')
     system2(
-        'cp ../res/128x128@2x.png tmpdeb/usr/share/icons/hicolor/256x256/apps/subnetdesk-weimutter6688.png')
+        'cp ../res/128x128@2x.png tmpdeb/usr/share/icons/hicolor/256x256/apps/subnetdesk.png')
     system2(
-        'cp ../res/scalable.svg tmpdeb/usr/share/icons/hicolor/scalable/apps/subnetdesk-weimutter6688.svg')
+        'cp ../res/scalable.svg tmpdeb/usr/share/icons/hicolor/scalable/apps/subnetdesk.svg')
     system2(
-        'cp ../res/rustdesk.desktop tmpdeb/usr/share/applications/subnetdesk-weimutter6688.desktop')
+        'cp ../res/rustdesk.desktop tmpdeb/usr/share/applications/subnetdesk.desktop')
     system2(
-        'cp ../res/rustdesk-link.desktop tmpdeb/usr/share/applications/subnetdesk-weimutter6688-link.desktop')
+        'cp ../res/rustdesk-link.desktop tmpdeb/usr/share/applications/subnetdesk-link.desktop')
     system2(
-        'cp ../res/startwm.sh tmpdeb/etc/subnetdesk-weimutter6688/')
+        'cp ../res/startwm.sh tmpdeb/etc/subnetdesk/')
     system2(
-        'cp ../res/xorg.conf tmpdeb/etc/subnetdesk-weimutter6688/')
+        'cp ../res/xorg.conf tmpdeb/etc/subnetdesk/')
     system2(
-        'cp ../res/pam.d/rustdesk.debian tmpdeb/etc/pam.d/subnetdesk-weimutter6688')
+        'cp ../res/pam.d/rustdesk.debian tmpdeb/etc/pam.d/subnetdesk')
     system2(
-        "echo \"#!/bin/sh\" >> tmpdeb/usr/share/subnetdesk-weimutter6688/files/polkit && chmod a+x tmpdeb/usr/share/subnetdesk-weimutter6688/files/polkit")
+        "echo \"#!/bin/sh\" >> tmpdeb/usr/share/subnetdesk/files/polkit && chmod a+x tmpdeb/usr/share/subnetdesk/files/polkit")
     # Bundle libdrmtap.so only when this build actually enabled the `drm` feature, so stock packages
     # stay exactly what they were. The root service dlopens it in-process by absolute path.
     # `features` is the comma-joined string, so split it: a bare substring test would also match any
@@ -753,14 +753,14 @@ def build_flutter_deb(version, features):
         retarget_control_to_drm_variant()
     system2('cp -a ../res/DEBIAN/* tmpdeb/DEBIAN/')
     md5_file_folder("tmpdeb/")
-    system2('dpkg-deb -b tmpdeb subnetdesk-weimutter6688.deb;')
+    system2('dpkg-deb -b tmpdeb subnetdesk.deb;')
 
     system2('/bin/rm -rf tmpdeb/')
     system2('/bin/rm -rf ../res/DEBIAN/control')
-    os.rename('subnetdesk-weimutter6688.deb', '../subnetdesk-weimutter6688-%s.deb' % version)
+    os.rename('subnetdesk.deb', '../subnetdesk-%s.deb' % version)
     if ships_so:
         # Named apart from the stock package so installing the consent-free variant is a deliberate act.
-        os.rename('../subnetdesk-weimutter6688-%s.deb' % version, f'../{DRM_PACKAGE_NAME}-{version}.deb')
+        os.rename('../subnetdesk-%s.deb' % version, f'../{DRM_PACKAGE_NAME}-{version}.deb')
     os.chdir("..")
 
 
@@ -774,7 +774,7 @@ DRMTAP_WAKE_MARKER = b'enable-drm-display-wake'
 
 def _carries_drmtap_marker(path, marker=DRMTAP_DLOPEN_MARKER):
     # Chunked, with an overlap of len(marker)-1 so the marker cannot be missed at a chunk boundary:
-    # libsubnetdesk_weimutter6688.so is ~45 MB and there is no reason to hold it all in memory, and the `with`
+    # libsubnetdesk.so is ~45 MB and there is no reason to hold it all in memory, and the `with`
     # closes deterministically instead of relying on refcounting.
     with open(path, 'rb') as f:
         tail = b''
@@ -797,8 +797,8 @@ def assert_staged_binary_is_drm():
     Called from BOTH packaging paths. It used to guard only one of them, and `--skip-cargo` (which
     is how CI packages) reaches the other, where nothing had rebuilt the binary at all.
     """
-    binaries = [p for p in glob.glob('tmpdeb/usr/share/subnetdesk-weimutter6688/lib/libsubnetdesk_weimutter6688.so')
-                + glob.glob('tmpdeb/usr/share/subnetdesk-weimutter6688/subnetdesk-weimutter6688') if os.path.isfile(p)]
+    binaries = [p for p in glob.glob('tmpdeb/usr/share/subnetdesk/lib/libsubnetdesk.so')
+                + glob.glob('tmpdeb/usr/share/subnetdesk/subnetdesk') if os.path.isfile(p)]
     if not any(_carries_drmtap_marker(p) for p in binaries):
         raise Exception(
             f'--drm was requested but the staged bundle does not look like a drm build (no '
@@ -822,34 +822,34 @@ def assert_staged_binary_is_drm():
 def build_deb_from_folder(version, binary_folder, want_drm=False):
     os.chdir('flutter')
     system2('mkdir -p tmpdeb/usr/bin/')
-    system2('mkdir -p tmpdeb/usr/share/subnetdesk-weimutter6688')
-    system2('mkdir -p tmpdeb/usr/share/subnetdesk-weimutter6688/files/systemd/')
+    system2('mkdir -p tmpdeb/usr/share/subnetdesk')
+    system2('mkdir -p tmpdeb/usr/share/subnetdesk/files/systemd/')
     system2('mkdir -p tmpdeb/usr/share/icons/hicolor/256x256/apps/')
     system2('mkdir -p tmpdeb/usr/share/icons/hicolor/scalable/apps/')
     system2('mkdir -p tmpdeb/usr/share/applications/')
     system2('mkdir -p tmpdeb/usr/share/polkit-1/actions')
-    system2('rm tmpdeb/usr/bin/subnetdesk-weimutter6688 || true')
+    system2('rm tmpdeb/usr/bin/subnetdesk || true')
     system2(
-        f'cp -r ../{binary_folder}/* tmpdeb/usr/share/subnetdesk-weimutter6688/')
+        f'cp -r ../{binary_folder}/* tmpdeb/usr/share/subnetdesk/')
     system2(
-        'cp ../res/subnetdesk-weimutter6688.service tmpdeb/usr/share/subnetdesk-weimutter6688/files/systemd/')
+        'cp ../res/subnetdesk.service tmpdeb/usr/share/subnetdesk/files/systemd/')
     system2(
-        'cp ../res/128x128@2x.png tmpdeb/usr/share/icons/hicolor/256x256/apps/subnetdesk-weimutter6688.png')
+        'cp ../res/128x128@2x.png tmpdeb/usr/share/icons/hicolor/256x256/apps/subnetdesk.png')
     system2(
-        'cp ../res/scalable.svg tmpdeb/usr/share/icons/hicolor/scalable/apps/subnetdesk-weimutter6688.svg')
+        'cp ../res/scalable.svg tmpdeb/usr/share/icons/hicolor/scalable/apps/subnetdesk.svg')
     system2(
-        'cp ../res/rustdesk.desktop tmpdeb/usr/share/applications/subnetdesk-weimutter6688.desktop')
+        'cp ../res/rustdesk.desktop tmpdeb/usr/share/applications/subnetdesk.desktop')
     system2(
-        'cp ../res/rustdesk-link.desktop tmpdeb/usr/share/applications/subnetdesk-weimutter6688-link.desktop')
+        'cp ../res/rustdesk-link.desktop tmpdeb/usr/share/applications/subnetdesk-link.desktop')
     system2(
-        "echo \"#!/bin/sh\" >> tmpdeb/usr/share/subnetdesk-weimutter6688/files/polkit && chmod a+x tmpdeb/usr/share/subnetdesk-weimutter6688/files/polkit")
+        "echo \"#!/bin/sh\" >> tmpdeb/usr/share/subnetdesk/files/polkit && chmod a+x tmpdeb/usr/share/subnetdesk/files/polkit")
     # Where the capture library comes from for a `--package <folder> --drm` build. Two shapes are
     # supported, because two exist in practice: a bundle that already carries libdrmtap.so.0.*
     # (someone staged it, e.g. a CI artifact), and a plain bundle, which is what every build path
     # here actually produces -- the flutter deb builds the library straight into the staged deb, so
     # nothing ever puts it inside the bundle folder. Demanding it in the bundle made this flag
     # combination impossible to satisfy.
-    bundled_glob = glob.glob('tmpdeb/usr/share/subnetdesk-weimutter6688/libdrmtap.so.0.*')
+    bundled_glob = glob.glob('tmpdeb/usr/share/subnetdesk/libdrmtap.so.0.*')
     bundle_carries_so = any(os.path.isfile(p) and not os.path.islink(p) for p in bundled_glob)
     # The variant must be decided by the EXPLICIT --drm request, not merely by what happens to be
     # staged: a bundle that carries the .so must NOT be shipped as the consent-bypass variant when
@@ -878,7 +878,7 @@ def build_deb_from_folder(version, binary_folder, want_drm=False):
             _assert_so_has_egl(so)
             stage_libdrmtap_into_deb(so)
             system2(f'rm -f "{so}"')
-            system2('rm -f tmpdeb/usr/share/subnetdesk-weimutter6688/libdrmtap.so tmpdeb/usr/share/subnetdesk-weimutter6688/libdrmtap.so.0')
+            system2('rm -f tmpdeb/usr/share/subnetdesk/libdrmtap.so tmpdeb/usr/share/subnetdesk/libdrmtap.so.0')
         else:
             # Build it here, exactly as the flutter deb path does (build_libdrmtap_so asserts the
             # EGL backend itself). The library is independent of the staged binary.
@@ -892,13 +892,13 @@ def build_deb_from_folder(version, binary_folder, want_drm=False):
         retarget_control_to_drm_variant()
     system2('cp -a ../res/DEBIAN/* tmpdeb/DEBIAN/')
     md5_file_folder("tmpdeb/")
-    system2('dpkg-deb -b tmpdeb subnetdesk-weimutter6688.deb;')
+    system2('dpkg-deb -b tmpdeb subnetdesk.deb;')
 
     system2('/bin/rm -rf tmpdeb/')
     system2('/bin/rm -rf ../res/DEBIAN/control')
-    os.rename('subnetdesk-weimutter6688.deb', '../subnetdesk-weimutter6688-%s.deb' % version)
+    os.rename('subnetdesk.deb', '../subnetdesk-%s.deb' % version)
     if want_drm:
-        os.rename('../subnetdesk-weimutter6688-%s.deb' % version, f'../{DRM_PACKAGE_NAME}-{version}.deb')
+        os.rename('../subnetdesk-%s.deb' % version, f'../{DRM_PACKAGE_NAME}-{version}.deb')
     os.chdir("..")
 
 
@@ -909,7 +909,7 @@ def build_flutter_dmg(version, features):
             f'MACOSX_DEPLOYMENT_TARGET=10.14 cargo build --locked --features {features} --release')
     # copy dylib
     system2(
-        "cp target/release/liblibsubnetdesk_weimutter6688.dylib target/release/libsubnetdesk_weimutter6688.dylib")
+        "cp target/release/liblibsubnetdesk.dylib target/release/libsubnetdesk.dylib")
     os.chdir('flutter')
     # cargo builds a single-arch dylib for the host; restrict Xcode to the same arch
     # so the universal-by-default ARCHS_STANDARD doesn't try to link a missing slice.
@@ -917,11 +917,11 @@ def build_flutter_dmg(version, features):
     mac_arch = 'arm64' if platform.machine().lower() in ('arm64', 'aarch64') else 'x86_64'
     system2(
         f'FLUTTER_XCODE_ARCHS={mac_arch} FLUTTER_XCODE_ONLY_ACTIVE_ARCH=YES flutter build macos --release')
-    system2('cp -rf ../target/release/service ./build/macos/Build/Products/Release/SubnetDesk-weimutter6688.app/Contents/MacOS/')
+    system2('cp -rf ../target/release/service ./build/macos/Build/Products/Release/SubnetDesk.app/Contents/MacOS/')
     # Flutter signs the app before the service binary is copied. Sign the new nested
     # executable, refresh the outer ad-hoc signature, and fail before packaging if
     # the resulting bundle seal is invalid. Release CI may replace this signature.
-    app_path = './build/macos/Build/Products/Release/SubnetDesk-weimutter6688.app'
+    app_path = './build/macos/Build/Products/Release/SubnetDesk.app'
     service_path = f'{app_path}/Contents/MacOS/service'
     system2(f'codesign --force --sign - --options runtime "{service_path}"')
     system2(
@@ -930,8 +930,8 @@ def build_flutter_dmg(version, features):
     system2(f'codesign --verify --deep --strict --verbose=4 "{app_path}"')
     '''
     system2(
-        "create-dmg --volname \"SubnetDesk Installer\" --window-pos 200 120 --window-size 800 400 --icon-size 100 --app-drop-link 600 185 --icon SubnetDesk-weimutter6688.app 200 190 --hide-extension SubnetDesk-weimutter6688.app subnetdesk-weimutter6688.dmg ./build/macos/Build/Products/Release/SubnetDesk-weimutter6688.app")
-    os.rename("subnetdesk-weimutter6688.dmg", f"../subnetdesk-weimutter6688-{version}.dmg")
+        "create-dmg --volname \"SubnetDesk Installer\" --window-pos 200 120 --window-size 800 400 --icon-size 100 --app-drop-link 600 185 --icon SubnetDesk.app 200 190 --hide-extension SubnetDesk.app subnetdesk.dmg ./build/macos/Build/Products/Release/SubnetDesk.app")
+    os.rename("subnetdesk.dmg", f"../subnetdesk-{version}.dmg")
     '''
     os.chdir("..")
 
@@ -942,7 +942,7 @@ def build_flutter_arch_manjaro(version, features):
     ffi_bindgen_function_refactor()
     os.chdir('flutter')
     system2('flutter build linux --release')
-    system2(f'strip {flutter_build_dir}/lib/libsubnetdesk_weimutter6688.so')
+    system2(f'strip {flutter_build_dir}/lib/libsubnetdesk.so')
     os.chdir('../res')
     system2('HBB=`pwd`/.. FLUTTER=1 makepkg -f')
 
@@ -950,7 +950,7 @@ def build_flutter_arch_manjaro(version, features):
 def build_flutter_windows(version, features, skip_portable_pack):
     if not skip_cargo:
         system2(f'cargo build --locked --features {features} --lib --release')
-        if not os.path.exists("target/release/libsubnetdesk_weimutter6688.dll"):
+        if not os.path.exists("target/release/libsubnetdesk.dll"):
             print("cargo build failed, please check rust source code.")
             exit(-1)
     os.chdir('flutter')
@@ -963,19 +963,19 @@ def build_flutter_windows(version, features, skip_portable_pack):
     os.chdir('libs/portable')
     system2('pip3 install -r requirements.txt')
     system2(
-        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/subnetdesk-weimutter6688.exe')
+        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/subnetdesk.exe')
     os.chdir('../..')
     if os.path.exists('./rustdesk_portable.exe'):
-        os.replace('./target/release/subnetdesk-weimutter6688-portable-packer.exe',
+        os.replace('./target/release/subnetdesk-portable-packer.exe',
                    './rustdesk_portable.exe')
     else:
-        os.rename('./target/release/subnetdesk-weimutter6688-portable-packer.exe',
+        os.rename('./target/release/subnetdesk-portable-packer.exe',
                   './rustdesk_portable.exe')
     print(
         f'output location: {os.path.abspath(os.curdir)}/rustdesk_portable.exe')
-    os.rename('./rustdesk_portable.exe', f'./subnetdesk-weimutter6688-{version}-install.exe')
+    os.rename('./rustdesk_portable.exe', f'./subnetdesk-{version}-install.exe')
     print(
-        f'output location: {os.path.abspath(os.curdir)}/subnetdesk-weimutter6688-{version}-install.exe')
+        f'output location: {os.path.abspath(os.curdir)}/subnetdesk-{version}-install.exe')
 
 
 def main():
@@ -1025,19 +1025,19 @@ def main():
             build_flutter_windows(version, features, args.skip_portable_pack)
             return
         system2('cargo build --locked --release --features ' + features)
-        # system2('upx.exe target/release/subnetdesk-weimutter6688.exe')
-        system2('mv target/release/subnetdesk-weimutter6688.exe target/release/SubnetDesk-weimutter6688.exe')
+        # system2('upx.exe target/release/subnetdesk.exe')
+        system2('mv target/release/subnetdesk.exe target/release/SubnetDesk.exe')
         pa = os.environ.get('P')
         if pa:
             # https://certera.com/kb/tutorial-guide-for-safenet-authentication-client-for-code-signing/
             system2(
                 f'signtool sign /a /v /p {pa} /debug /f .\\cert.pfx /t http://timestamp.digicert.com  '
-                'target\\release\\subnetdesk-weimutter6688.exe')
+                'target\\release\\subnetdesk.exe')
         else:
             print('Not signed')
         os.makedirs(res_dir, exist_ok=True)
         system2(
-            f'cp -rf target/release/SubnetDesk-weimutter6688.exe {res_dir}')
+            f'cp -rf target/release/SubnetDesk.exe {res_dir}')
         os.chdir('libs/portable')
         system2('pip3 install -r requirements.txt')
         system2(
@@ -1054,7 +1054,7 @@ def main():
             system2('strip target/release/rustdesk')
             system2('ln -s res/pacman_install && ln -s res/PKGBUILD')
             system2('HBB=`pwd` makepkg -f')
-        system2('mv rustdesk-%s-0-x86_64.pkg.tar.zst subnetdesk-weimutter6688-%s-manjaro-arch.pkg.tar.zst' % (
+        system2('mv rustdesk-%s-0-x86_64.pkg.tar.zst subnetdesk-%s-manjaro-arch.pkg.tar.zst' % (
             version, version))
         # pacman -U ./rustdesk.pkg.tar.zst
     elif os.path.isfile('/usr/bin/yum'):
@@ -1064,7 +1064,7 @@ def main():
             "sed -i 's/Version:    .*/Version:    %s/g' res/rpm.spec" % version)
         system2('HBB=`pwd` rpmbuild -ba res/rpm.spec')
         system2(
-            'mv $HOME/rpmbuild/RPMS/x86_64/subnetdesk-weimutter6688-%s-0.x86_64.rpm ./subnetdesk-weimutter6688-%s-fedora28-centos8.rpm' % (
+            'mv $HOME/rpmbuild/RPMS/x86_64/subnetdesk-%s-0.x86_64.rpm ./subnetdesk-%s-fedora28-centos8.rpm' % (
                 version, version))
         # yum localinstall rustdesk.rpm
     elif os.path.isfile('/usr/bin/zypper'):
@@ -1074,7 +1074,7 @@ def main():
             "sed -i 's/Version:    .*/Version:    %s/g' res/rpm-suse.spec" % version)
         system2('HBB=`pwd` rpmbuild -ba res/rpm-suse.spec')
         system2(
-            'mv $HOME/rpmbuild/RPMS/x86_64/subnetdesk-weimutter6688-%s-0.x86_64.rpm ./subnetdesk-weimutter6688-%s-suse.rpm' % (
+            'mv $HOME/rpmbuild/RPMS/x86_64/subnetdesk-%s-0.x86_64.rpm ./subnetdesk-%s-suse.rpm' % (
                 version, version))
         # yum localinstall rustdesk.rpm
     else:
@@ -1090,9 +1090,9 @@ def main():
             system2('cargo --locked bundle --release --features ' + features)
             if osx:
                 system2(
-                    'strip target/release/bundle/osx/SubnetDesk-weimutter6688.app/Contents/MacOS/rustdesk')
+                    'strip target/release/bundle/osx/SubnetDesk.app/Contents/MacOS/rustdesk')
                 system2(
-                    'cp libsciter.dylib target/release/bundle/osx/SubnetDesk-weimutter6688.app/Contents/MacOS/')
+                    'cp libsciter.dylib target/release/bundle/osx/SubnetDesk.app/Contents/MacOS/')
                 # https://github.com/sindresorhus/create-dmg
                 system2('/bin/rm -rf *.dmg')
                 pa = os.environ.get('P')
@@ -1100,30 +1100,30 @@ def main():
                     system2('''
     # buggy: rcodesign sign ... path/*, have to sign one by one
     # install rcodesign via cargo install apple-codesign
-    #rcodesign sign --p12-file ~/.p12/subnetdesk-weimutter6688-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./target/release/bundle/osx/SubnetDesk-weimutter6688.app/Contents/MacOS/rustdesk
-    #rcodesign sign --p12-file ~/.p12/subnetdesk-weimutter6688-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./target/release/bundle/osx/SubnetDesk-weimutter6688.app/Contents/MacOS/libsciter.dylib
-    #rcodesign sign --p12-file ~/.p12/subnetdesk-weimutter6688-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./target/release/bundle/osx/SubnetDesk-weimutter6688.app
+    #rcodesign sign --p12-file ~/.p12/subnetdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./target/release/bundle/osx/SubnetDesk.app/Contents/MacOS/rustdesk
+    #rcodesign sign --p12-file ~/.p12/subnetdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./target/release/bundle/osx/SubnetDesk.app/Contents/MacOS/libsciter.dylib
+    #rcodesign sign --p12-file ~/.p12/subnetdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./target/release/bundle/osx/SubnetDesk.app
     # goto "Keychain Access" -> "My Certificates" for below id which starts with "Developer ID Application:"
-    codesign -s "Developer ID Application: {0}" --force --options runtime  ./target/release/bundle/osx/SubnetDesk-weimutter6688.app/Contents/MacOS/*
-    codesign -s "Developer ID Application: {0}" --force --options runtime  ./target/release/bundle/osx/SubnetDesk-weimutter6688.app
+    codesign -s "Developer ID Application: {0}" --force --options runtime  ./target/release/bundle/osx/SubnetDesk.app/Contents/MacOS/*
+    codesign -s "Developer ID Application: {0}" --force --options runtime  ./target/release/bundle/osx/SubnetDesk.app
     '''.format(pa))
                 system2(
-                    'create-dmg "SubnetDesk %s.dmg" "target/release/bundle/osx/SubnetDesk-weimutter6688.app"' % version)
+                    'create-dmg "SubnetDesk %s.dmg" "target/release/bundle/osx/SubnetDesk.app"' % version)
                 os.rename('SubnetDesk %s.dmg' %
-                          version, 'subnetdesk-weimutter6688-%s.dmg' % version)
+                          version, 'subnetdesk-%s.dmg' % version)
                 if pa:
                     system2('''
     # https://pyoxidizer.readthedocs.io/en/apple-codesign-0.14.0/apple_codesign.html
     # https://pyoxidizer.readthedocs.io/en/stable/tugger_code_signing.html
     # https://developer.apple.com/developer-id/
     # goto xcode and login with apple id, manager certificates (Developer ID Application and/or Developer ID Installer) online there (only download and double click (install) cer file can not export p12 because no private key)
-    #rcodesign sign --p12-file ~/.p12/subnetdesk-weimutter6688-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./subnetdesk-weimutter6688-{1}.dmg
-    codesign -s "Developer ID Application: {0}" --force --options runtime ./subnetdesk-weimutter6688-{1}.dmg
+    #rcodesign sign --p12-file ~/.p12/subnetdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./subnetdesk-{1}.dmg
+    codesign -s "Developer ID Application: {0}" --force --options runtime ./subnetdesk-{1}.dmg
     # https://appstoreconnect.apple.com/access/api
     # https://gregoryszorc.com/docs/apple-codesign/stable/apple_codesign_getting_started.html#apple-codesign-app-store-connect-api-key
     # p8 file is generated when you generate api key (can download only once)
-    rcodesign notary-submit --api-key-path ../.p12/api-key.json  --staple subnetdesk-weimutter6688-{1}.dmg
-    # verify:  spctl -a -t exec -v /Applications/SubnetDesk-weimutter6688.app
+    rcodesign notary-submit --api-key-path ../.p12/api-key.json  --staple subnetdesk-{1}.dmg
+    # verify:  spctl -a -t exec -v /Applications/SubnetDesk.app
     '''.format(pa, version))
                 else:
                     print('Not signed')
@@ -1132,35 +1132,35 @@ def main():
                 system2(
                     'mv target/release/bundle/deb/rustdesk*.deb ./rustdesk.deb')
                 system2('dpkg-deb -R rustdesk.deb tmpdeb')
-                system2("sed -i 's/^Package: .*/Package: subnetdesk-weimutter6688/' tmpdeb/DEBIAN/control")
-                system2('mkdir -p tmpdeb/usr/share/subnetdesk-weimutter6688/files/systemd/')
+                system2("sed -i 's/^Package: .*/Package: subnetdesk/' tmpdeb/DEBIAN/control")
+                system2('mkdir -p tmpdeb/usr/share/subnetdesk/files/systemd/')
                 system2('mkdir -p tmpdeb/usr/share/icons/hicolor/256x256/apps/')
                 system2('mkdir -p tmpdeb/usr/share/icons/hicolor/scalable/apps/')
                 system2(
-                    'cp res/subnetdesk-weimutter6688.service tmpdeb/usr/share/subnetdesk-weimutter6688/files/systemd/')
+                    'cp res/subnetdesk.service tmpdeb/usr/share/subnetdesk/files/systemd/')
                 system2(
-                    'cp res/128x128@2x.png tmpdeb/usr/share/icons/hicolor/256x256/apps/subnetdesk-weimutter6688.png')
+                    'cp res/128x128@2x.png tmpdeb/usr/share/icons/hicolor/256x256/apps/subnetdesk.png')
                 system2(
-                    'cp res/scalable.svg tmpdeb/usr/share/icons/hicolor/scalable/apps/subnetdesk-weimutter6688.svg')
+                    'cp res/scalable.svg tmpdeb/usr/share/icons/hicolor/scalable/apps/subnetdesk.svg')
                 system2(
-                    'cp res/rustdesk.desktop tmpdeb/usr/share/applications/subnetdesk-weimutter6688.desktop')
+                    'cp res/rustdesk.desktop tmpdeb/usr/share/applications/subnetdesk.desktop')
                 system2(
-                    'cp res/rustdesk-link.desktop tmpdeb/usr/share/applications/subnetdesk-weimutter6688-link.desktop')
-                os.system('mkdir -p tmpdeb/etc/subnetdesk-weimutter6688/')
-                os.system('cp -a res/startwm.sh tmpdeb/etc/subnetdesk-weimutter6688/')
-                os.system('mkdir -p tmpdeb/etc/X11/subnetdesk-weimutter6688/')
-                os.system('cp res/xorg.conf tmpdeb/etc/X11/subnetdesk-weimutter6688/')
+                    'cp res/rustdesk-link.desktop tmpdeb/usr/share/applications/subnetdesk-link.desktop')
+                os.system('mkdir -p tmpdeb/etc/subnetdesk/')
+                os.system('cp -a res/startwm.sh tmpdeb/etc/subnetdesk/')
+                os.system('mkdir -p tmpdeb/etc/X11/subnetdesk/')
+                os.system('cp res/xorg.conf tmpdeb/etc/X11/subnetdesk/')
                 os.system('cp -a res/DEBIAN/* tmpdeb/DEBIAN/')
-                system2("sed -i 's/^Package: .*/Package: subnetdesk-weimutter6688/' tmpdeb/DEBIAN/control")
+                system2("sed -i 's/^Package: .*/Package: subnetdesk/' tmpdeb/DEBIAN/control")
                 os.system('mkdir -p tmpdeb/etc/pam.d/')
-                os.system('cp pam.d/rustdesk.debian tmpdeb/etc/pam.d/subnetdesk-weimutter6688')
+                os.system('cp pam.d/rustdesk.debian tmpdeb/etc/pam.d/subnetdesk')
                 system2('strip tmpdeb/usr/bin/rustdesk')
-                system2('mkdir -p tmpdeb/usr/share/subnetdesk-weimutter6688')
-                system2('mv tmpdeb/usr/bin/rustdesk tmpdeb/usr/share/subnetdesk-weimutter6688/subnetdesk-weimutter6688')
-                system2('cp libsciter-gtk.so tmpdeb/usr/share/subnetdesk-weimutter6688/')
+                system2('mkdir -p tmpdeb/usr/share/subnetdesk')
+                system2('mv tmpdeb/usr/bin/rustdesk tmpdeb/usr/share/subnetdesk/subnetdesk')
+                system2('cp libsciter-gtk.so tmpdeb/usr/share/subnetdesk/')
                 md5_file_folder("tmpdeb/")
-                system2('dpkg-deb -b tmpdeb subnetdesk-weimutter6688.deb; /bin/rm -rf tmpdeb/')
-                os.rename('subnetdesk-weimutter6688.deb', 'subnetdesk-weimutter6688-%s.deb' % version)
+                system2('dpkg-deb -b tmpdeb subnetdesk.deb; /bin/rm -rf tmpdeb/')
+                os.rename('subnetdesk.deb', 'subnetdesk-%s.deb' % version)
 
 
 def md5_file(fn):

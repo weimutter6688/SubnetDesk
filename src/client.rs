@@ -109,7 +109,7 @@ pub const LOGIN_MSG_LAN_CREDENTIALS_WRONG: &str = "Username or password is incor
 const LAN_CREDENTIAL_CONFIG_PREFIX: &str = "lan-credential-";
 const LAN_CREDENTIAL_USERNAME_OPTION: &str = "lan-access-username";
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
-const LAN_CREDENTIAL_KEYRING_SERVICE: &str = "io.github.weimutter6688.SubnetDesk.LANCredentials";
+const LAN_CREDENTIAL_KEYRING_SERVICE: &str = "com.subnetdesk.SubnetDesk.LANCredentials";
 pub const LOGIN_MSG_OFFLINE: &str = "Offline";
 pub const LOGIN_SCREEN_WAYLAND: &str = "Wayland login screen is not supported";
 

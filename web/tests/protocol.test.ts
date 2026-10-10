@@ -14,11 +14,11 @@ describe("LAN protocol helpers", () => {
     const serverKey = new Uint8Array(32).fill(3);
     const transcript = buildHandshakeTranscript(clientNonce, serverNonce, serverKey);
 
-    expect(new TextDecoder().decode(transcript.slice(0, 42))).toBe(
-      "subnetdesk-weimutter6688-lan-handshake-v3\0",
+    expect(new TextDecoder().decode(transcript.slice(0, 28))).toBe(
+      "subnetdesk-lan-handshake-v3\0",
     );
-    expect(Array.from(transcript.slice(42, 46))).toEqual([0, 0, 0, 3]);
-    expect(transcript.length).toBe(142);
+    expect(Array.from(transcript.slice(28, 32))).toEqual([0, 0, 0, 3]);
+    expect(transcript.length).toBe(128);
   });
 
   test("rejects malformed handshake values", () => {

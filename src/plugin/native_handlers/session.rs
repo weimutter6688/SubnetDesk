@@ -23,7 +23,7 @@ pub type OnSessionRgbaCallback = unsafe extern "C" fn(
 );
 
 #[derive(Default)]
-/// Session related handler for libsubnetdesk_weimutter6688 core.
+/// Session related handler for libsubnetdesk core.
 pub struct PluginNativeSessionHandler {
     sessions: Arc<RwLock<Vec<crate::flutter::FlutterSession>>>,
     cbs: Arc<RwLock<HashMap<String, OnSessionRgbaCallback>>>,

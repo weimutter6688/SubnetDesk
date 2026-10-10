@@ -8,8 +8,8 @@ args = parser.parse_args()
 path = args.source_root / "WindowInjection/dllmain.cpp"
 source = path.read_text(encoding="utf-8-sig")
 for old, new in (
-    ('_T("RustDeskPrivacyWindow")', '_T("SubnetDeskWeimutter6688PrivacyWindow")'),
-    ('_T("RustDeskPrivacyWindowClass")', '_T("SubnetDeskWeimutter6688PrivacyWindowClass")'),
+    ('_T("RustDeskPrivacyWindow")', '_T("SubnetDeskPrivacyWindow")'),
+    ('_T("RustDeskPrivacyWindowClass")', '_T("SubnetDeskPrivacyWindowClass")'),
 ):
     if source.count(old) != 1:
         raise SystemExit(f"Pinned privacy helper identity changed: {old}")

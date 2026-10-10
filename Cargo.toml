@@ -1,19 +1,19 @@
 [package]
-name = "subnetdesk-weimutter6688"
+name = "subnetdesk"
 version = "1.3.0"
 authors = ["SubnetDesk contributors"]
 edition = "2021"
 build= "build.rs"
 description = "SubnetDesk LAN/VPN Remote Desktop"
-default-run = "subnetdesk-weimutter6688"
+default-run = "subnetdesk"
 rust-version = "1.75"
 
 [lib]
-name = "libsubnetdesk_weimutter6688"
+name = "libsubnetdesk"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
-name = "subnetdesk-weimutter6688-service"
+name = "subnetdesk-service"
 path = "src/service.rs"
 
 [features]
@@ -224,9 +224,9 @@ libxdo-sys = { path = "libs/libxdo-sys-stub" }
 [package.metadata.winres]
 LegalCopyright = "Copyright © 2026 SubnetDesk contributors."
 ProductName = "SubnetDesk"
-CompanyName = "weimutter6688"
+CompanyName = "SubnetDesk"
 FileDescription = "SubnetDesk LAN/VPN Remote Desktop"
-OriginalFilename = "rustdesk.exe"
+OriginalFilename = "SubnetDesk.exe"
 
 [target.'cfg(target_os="windows")'.build-dependencies]
 winres = "0.1"
@@ -243,7 +243,7 @@ docopt = "1.1"
 
 [package.metadata.bundle]
 name = "SubnetDesk"
-identifier = "io.github.weimutter6688.subnetdesk"
+identifier = "com.subnetdesk.app"
 icon = ["res/32x32.png", "res/128x128.png", "res/128x128@2x.png"]
 osx_minimum_system_version = "10.14"
 

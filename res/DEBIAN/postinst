@@ -5,13 +5,13 @@ set -e
 if [ "$1" = configure ]; then
 
 	INITSYS=$(ls -al /proc/1/exe | awk -F' ' '{print $NF}' | awk -F'/' '{print $NF}')
-	ln -f -s /usr/share/subnetdesk-weimutter6688/subnetdesk-weimutter6688 /usr/bin/subnetdesk-weimutter6688
+	ln -f -s /usr/share/subnetdesk/subnetdesk /usr/bin/subnetdesk
 
 	if [ "systemd" == "$INITSYS" ]; then
 		mkdir -p /usr/lib/systemd/system/
-		cp /usr/share/subnetdesk-weimutter6688/files/systemd/subnetdesk-weimutter6688.service /usr/lib/systemd/system/subnetdesk-weimutter6688.service
+		cp /usr/share/subnetdesk/files/systemd/subnetdesk.service /usr/lib/systemd/system/subnetdesk.service
 		systemctl daemon-reload
-		systemctl enable subnetdesk-weimutter6688
-		systemctl start subnetdesk-weimutter6688
+		systemctl enable subnetdesk
+		systemctl start subnetdesk
 	fi
 fi

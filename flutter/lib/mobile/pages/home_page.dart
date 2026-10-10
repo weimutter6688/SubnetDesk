@@ -202,7 +202,7 @@ class WebHomePage extends StatelessWidget {
           return;
         }
         list.removeAt(0);
-        fakelink = "subnetdesk-weimutter6688://${list.join(s)}";
+        fakelink = "subnetdesk://${list.join(s)}";
         break;
       }
     }

@@ -89,12 +89,12 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "weimutter6688" "\0"
+            VALUE "CompanyName", "SubnetDesk" "\0"
             VALUE "FileDescription", "SubnetDesk LAN Remote Desktop" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "rustdesk" "\0"
+            VALUE "InternalName", "SubnetDesk" "\0"
             VALUE "LegalCopyright", "Copyright © 2026 Purslane Tech Pte. Ltd. All rights reserved." "\0"
-            VALUE "OriginalFilename", "SubnetDesk-weimutter6688.exe" "\0"
+            VALUE "OriginalFilename", "SubnetDesk.exe" "\0"
             VALUE "ProductName", "SubnetDesk" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END

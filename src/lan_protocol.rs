@@ -14,7 +14,7 @@ use hbb_common::{
     tcp, timeout, ResultType, Stream,
 };
 
-const TRANSCRIPT_PREFIX: &[u8] = b"subnetdesk-weimutter6688-lan-handshake-v3\0";
+const TRANSCRIPT_PREFIX: &[u8] = b"subnetdesk-lan-handshake-v3\0";
 pub(crate) const MAX_AUTH_PACKET_LENGTH: usize = 64 * 1024;
 
 pub struct LanPeerIdentity {

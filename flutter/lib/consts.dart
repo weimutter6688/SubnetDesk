@@ -215,7 +215,7 @@ const String kKeyReverseMouseWheel = "reverse_mouse_wheel";
 const String kMsgboxTextWaitingForImage = 'Connected, waiting for image...';
 
 // the executable name of the portable version
-const String kEnvPortableExecutable = "SUBNETDESK_WEIMUTTER6688_APPNAME";
+const String kEnvPortableExecutable = "SUBNETDESK_APPNAME";
 
 const Color kColorWarn = Color.fromARGB(255, 245, 133, 59);
 const Color kColorCanvas = Colors.black;

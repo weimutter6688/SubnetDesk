@@ -1,5 +1,5 @@
 export const LAN_PROTOCOL_VERSION = 3;
-const TRANSCRIPT_PREFIX = new TextEncoder().encode("subnetdesk-weimutter6688-lan-handshake-v3\0");
+const TRANSCRIPT_PREFIX = new TextEncoder().encode("subnetdesk-lan-handshake-v3\0");
 const NONCE_LENGTH = 32;
 const PUBLIC_KEY_LENGTH = 32;
 const SECRETBOX_NONCE_LENGTH = 24;

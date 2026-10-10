@@ -1,4 +1,4 @@
-use libsubnetdesk_weimutter6688::*;
+use libsubnetdesk::*;
 
 #[cfg(not(target_os = "macos"))]
 fn main() {}

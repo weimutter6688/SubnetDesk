@@ -7855,7 +7855,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "subnetdesk-weimutter6688"
+name = "subnetdesk"
 version = "1.3.0"
 dependencies = [
  "android-wakelock",
@@ -7974,7 +7974,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "subnetdesk-weimutter6688-portable-packer"
+name = "subnetdesk-portable-packer"
 version = "1.3.0"
 dependencies = [
  "brotli 3.5.0",

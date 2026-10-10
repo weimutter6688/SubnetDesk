@@ -53,12 +53,12 @@ jobs:
           ! grep -Fq 'software-update' flutter/run.sh
           sed -n '/^  build-for-windows-flutter:/,/^  build-for-windows-sciter:/p' .github/workflows/flutter-build.yml | grep -Fq 'toolchain: ${{ env.RUST_VERSION }}'
           for artifact in \
-            'name: subnetdesk-weimutter6688-windows-' \
-            'name: subnetdesk-weimutter6688-macos-' \
-            'name: subnetdesk-weimutter6688-linux-rpm-' \
-            'name: subnetdesk-weimutter6688-archlinux-' \
-            'name: subnetdesk-weimutter6688-appimage-' \
-            'name: subnetdesk-weimutter6688-flatpak-'
+            'name: subnetdesk-windows-' \
+            'name: subnetdesk-macos-' \
+            'name: subnetdesk-linux-rpm-' \
+            'name: subnetdesk-archlinux-' \
+            'name: subnetdesk-appimage-' \
+            'name: subnetdesk-flatpak-'
           do
             grep -Fq "$artifact" .github/workflows/flutter-build.yml
           done

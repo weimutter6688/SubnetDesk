@@ -30,10 +30,10 @@ use winapi::{
 pub(super) const PRIVACY_MODE_IMPL: &str = "privacy_mode_impl_mag";
 
 pub const ORIGIN_PROCESS_EXE: &'static str = "C:\\Windows\\System32\\RuntimeBroker.exe";
-pub const WIN_TOPMOST_INJECTED_PROCESS_EXE: &'static str = "RuntimeBroker_subnetdesk_weimutter6688.exe";
+pub const WIN_TOPMOST_INJECTED_PROCESS_EXE: &'static str = "RuntimeBroker_subnetdesk.exe";
 pub const INJECTED_PROCESS_EXE: &'static str = WIN_TOPMOST_INJECTED_PROCESS_EXE;
-pub(super) const PRIVACY_WINDOW_CLASS: &'static str = "SubnetDeskWeimutter6688PrivacyWindowClass";
-pub(super) const PRIVACY_WINDOW_NAME: &'static str = "SubnetDeskWeimutter6688PrivacyWindow";
+pub(super) const PRIVACY_WINDOW_CLASS: &'static str = "SubnetDeskPrivacyWindowClass";
+pub(super) const PRIVACY_WINDOW_NAME: &'static str = "SubnetDeskPrivacyWindow";
 const PRIVACY_WINDOW_WAIT_MILLIS: u128 = 1_000;
 const PRIVACY_WINDOW_WAIT_EXTRA_MONITOR_MILLIS: u128 = 500;
 const PRIVACY_WINDOW_POLL_INTERVAL_MILLIS: u64 = 100;

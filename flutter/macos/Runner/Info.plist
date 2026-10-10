@@ -28,10 +28,10 @@
 			<key>CFBundleURLIconFile</key>
 			<string></string>
 			<key>CFBundleURLName</key>
-			<string>io.github.weimutter6688.subnetdesk</string>
+			<string>com.subnetdesk.app</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>subnetdesk-weimutter6688</string>
+				<string>subnetdesk</string>
 			</array>
 		</dict>
 	</array>
@@ -49,7 +49,7 @@
 	<string>SubnetDesk uses your local network to discover and connect to nearby devices for remote access.</string>
 	<key>NSBonjourServices</key>
 	<array>
-		<string>_sd-w6688._tcp</string>
+		<string>_subnetdesk._tcp</string>
 	</array>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>

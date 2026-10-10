@@ -145,17 +145,17 @@ class PlatformFFI {
   Future<void> init(String appType) async {
     _appType = appType;
     final dylib = isAndroid
-        ? DynamicLibrary.open('libsubnetdesk_weimutter6688.so')
+        ? DynamicLibrary.open('libsubnetdesk.so')
         : isLinux
-            ? DynamicLibrary.open('libsubnetdesk_weimutter6688.so')
+            ? DynamicLibrary.open('libsubnetdesk.so')
             : isWindows
-                ? DynamicLibrary.open('libsubnetdesk_weimutter6688.dll')
+                ? DynamicLibrary.open('libsubnetdesk.dll')
                 :
                 // Use executable itself as the dynamic library for MacOS.
                 // Multiple dylib instances will cause some global instances to be invalid.
                 // eg. `lazy_static` objects in rust side, will be created more than once, which is not expected.
                 //
-                // isMacOS? DynamicLibrary.open("liblibsubnetdesk_weimutter6688.dylib") :
+                // isMacOS? DynamicLibrary.open("liblibsubnetdesk.dylib") :
                 DynamicLibrary.process();
     debugPrint('initializing FFI $_appType');
     try {

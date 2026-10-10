@@ -732,7 +732,7 @@ pub fn get_uri_prefix() -> String {
 
 #[cfg(target_os = "macos")]
 pub fn get_full_name() -> String {
-    "io.github.weimutter6688.subnetdesk".to_owned()
+    "com.subnetdesk.app".to_owned()
 }
 
 pub fn is_setup(name: &str) -> bool {
