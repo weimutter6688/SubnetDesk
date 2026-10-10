@@ -134,6 +134,15 @@ Successful connections appear in recent devices independently of **Remember pass
 - Device fingerprints provide trust-on-first-use verification and help detect an unexpected endpoint identity change.
 - CIDR allowlists let the controlled device limit which source networks may connect.
 
+The current transport uses LAN protocol **v2**, which separates encryption nonces
+by direction and keeps port-forwarding/RDP tunnel traffic encrypted after login.
+Update **both endpoints** together; protocol v1 peers are rejected without a
+downgrade. Reload the browser client after updating the host. Existing accounts,
+device fingerprints, and network rules retain their configuration formats.
+Peer avatar URLs no longer trigger automatic HTTP requests. See the
+[network and security review](docs/security-network-review.md) for findings,
+runtime destinations, validation, and review limits.
+
 As with any remote-control software, expose the listening port only to trusted networks, use a strong unique password, and verify fingerprints through a separate trusted channel when possible.
 
 
@@ -148,7 +157,10 @@ empty after restart. Web access inherits this list unless its own allowlist is s
 These are source-address rules, not automatic detection of a VPN tunnel.
 
 Known-device connections try an alternate address after **80 ms** if the first
-attempt is still pending, with at most two concurrent attempts and fingerprint checks.
+attempt is still pending, with at most two concurrent candidate endpoints and
+fingerprint checks. Each endpoint shares one timeout budget across DNS and TCP,
+interleaves IPv4/IPv6 addresses, and races at most two resolved addresses with an
+80 ms fallback delay. Together these limits allow at most four TCP attempts.
 
 ### Connection modes and recovery
 
