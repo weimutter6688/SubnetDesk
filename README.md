@@ -13,12 +13,12 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/weimutter6688/SubnetDesk/releases/latest"><img src="https://img.shields.io/github/v/release/zibo-chen/SubnetDesk?style=flat-square&logo=github&color=2563eb" alt="Latest release"></a>
-  <a href="https://github.com/weimutter6688/SubnetDesk/releases"><img src="https://img.shields.io/github/downloads/zibo-chen/SubnetDesk/total?style=flat-square&logo=github&color=0ea5e9" alt="Total downloads"></a>
-  <a href="https://github.com/weimutter6688/SubnetDesk/stargazers"><img src="https://img.shields.io/github/stars/zibo-chen/SubnetDesk?style=flat-square&logo=github&color=f59e0b" alt="GitHub stars"></a>
-  <a href="https://github.com/weimutter6688/SubnetDesk/network/members"><img src="https://img.shields.io/github/forks/zibo-chen/SubnetDesk?style=flat-square&logo=github" alt="GitHub forks"></a>
-  <a href="https://github.com/weimutter6688/SubnetDesk/actions/workflows/subnetdesk-preflight.yml"><img src="https://img.shields.io/github/actions/workflow/status/zibo-chen/SubnetDesk/subnetdesk-preflight.yml?branch=master&style=flat-square&label=build" alt="Build status"></a>
-  <a href="LICENCE"><img src="https://img.shields.io/github/license/zibo-chen/SubnetDesk?style=flat-square&color=16a34a" alt="License"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/releases/latest"><img src="https://img.shields.io/github/v/release/weimutter6688/SubnetDesk?style=flat-square&logo=github&color=2563eb" alt="Latest release"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/releases"><img src="https://img.shields.io/github/downloads/weimutter6688/SubnetDesk/total?style=flat-square&logo=github&color=0ea5e9" alt="Total downloads"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/stargazers"><img src="https://img.shields.io/github/stars/weimutter6688/SubnetDesk?style=flat-square&logo=github&color=f59e0b" alt="GitHub stars"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/network/members"><img src="https://img.shields.io/github/forks/weimutter6688/SubnetDesk?style=flat-square&logo=github" alt="GitHub forks"></a>
+  <a href="https://github.com/weimutter6688/SubnetDesk/actions/workflows/subnetdesk-preflight.yml"><img src="https://img.shields.io/github/actions/workflow/status/weimutter6688/SubnetDesk/subnetdesk-preflight.yml?branch=master&style=flat-square&label=build" alt="Build status"></a>
+  <a href="LICENCE"><img src="https://img.shields.io/github/license/weimutter6688/SubnetDesk?style=flat-square&color=16a34a" alt="License"></a>
 </p>
 
 <p align="center">
