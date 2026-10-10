@@ -29,7 +29,7 @@ struct Announcement {
 
 impl Announcement {
     fn current() -> Option<Self> {
-        if Config::get_option("lan-discovery-enabled") == "N"
+        if Config::get_option("lan-discovery-enabled") != "Y"
             || !crate::lan_server::LanServer::is_discoverable()
         {
             return None;

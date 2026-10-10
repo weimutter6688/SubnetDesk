@@ -306,12 +306,12 @@ fn option_enabled(value: &str) -> bool {
 }
 
 fn normalized_web_permission_profile(value: &str) -> &'static str {
-    if value.eq_ignore_ascii_case("view-only") {
-        "view-only"
+    if value.eq_ignore_ascii_case("control") {
+        "control"
     } else if value.eq_ignore_ascii_case("collaboration") {
         "collaboration"
     } else {
-        "control"
+        "view-only"
     }
 }
 
@@ -1624,6 +1624,11 @@ mod tests {
         assert!(!option_enabled("N"));
         assert!(option_enabled("Y"));
         assert!(https_required());
+        for value in ["", "unknown", "view-only"] {
+            assert_eq!(normalized_web_permission_profile(value), "view-only");
+        }
+        assert_eq!(normalized_web_permission_profile("control"), "control");
+        assert_eq!(normalized_web_permission_profile("collaboration"), "collaboration");
     }
 
     #[test]

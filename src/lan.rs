@@ -131,7 +131,7 @@ pub(super) fn start_listening() -> ResultType<()> {
                 match msg_in.union {
                     Some(rendezvous_message::Union::PeerDiscovery(p)) => {
                         if p.cmd == "ping"
-                            && Config::get_option("lan-discovery-enabled") != "N"
+                            && Config::get_option("lan-discovery-enabled") == "Y"
                             && crate::lan_server::LanServer::is_discoverable()
                             && crate::lan_server::source_allowed(addr.ip())
                         {
@@ -174,6 +174,9 @@ pub(super) fn start_listening() -> ResultType<()> {
 }
 
 pub(crate) async fn discover_async() -> ResultType<()> {
+    if Config::get_option("lan-discovery-enabled") != "Y" {
+        return Ok(());
+    }
     if DISCOVERY_RUNNING
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
         .is_err()

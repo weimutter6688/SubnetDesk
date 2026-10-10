@@ -1803,7 +1803,7 @@ fn lan_server_info() -> String {
         "port": port,
         "listen_addresses": Config::get_option("lan-listen-addresses"),
         "allowed_networks": Config::get_option("lan-allowed-networks"),
-        "discovery_enabled": Config::get_option("lan-discovery-enabled") != "N",
+        "discovery_enabled": Config::get_option("lan-discovery-enabled") == "Y",
         "web_access_enabled": Config::get_option("web-access-enabled") == "Y",
         "web_listen_port": web_listen_port,
         "web_https_enabled": web_https_enabled,

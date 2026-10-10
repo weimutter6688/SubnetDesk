@@ -1020,13 +1020,13 @@ Future<void> showLanSettingsDialog(
     text: info['web_allowed_hosts']?.toString() ?? '',
   );
   var webPermissionProfile =
-      info['web_permission_profile']?.toString() ?? 'control';
+      info['web_permission_profile']?.toString() ?? 'view-only';
   if (!const {
     'view-only',
     'control',
     'collaboration',
   }.contains(webPermissionProfile)) {
-    webPermissionProfile = 'control';
+    webPermissionProfile = 'view-only';
   }
   var discoveryEnabled = info['discovery_enabled'] == true;
   var webAccessEnabled = info['web_access_enabled'] == true;
@@ -1281,10 +1281,15 @@ Future<void> showLanSettingsDialog(
                               ),
                             ),
                           ),
-                          Switch(
-                            value: discoveryEnabled,
-                            onChanged: (value) =>
-                                setDialogState(() => discoveryEnabled = value),
+                          Tooltip(
+                            message: 'Off: manual address connections only. '
+                                'On: advertises device name, OS and fingerprint '
+                                'to the local network and scans for peers.',
+                            child: Switch(
+                              value: discoveryEnabled,
+                              onChanged: (value) =>
+                                  setDialogState(() => discoveryEnabled = value),
+                            ),
                           ),
                         ],
                       ),
@@ -1401,7 +1406,7 @@ Future<void> showLanSettingsDialog(
                                 ),
                               ],
                               onChanged: (value) => setDialogState(
-                                () => webPermissionProfile = value ?? 'control',
+                                () => webPermissionProfile = value ?? 'view-only',
                               ),
                             ),
                             const SizedBox(height: 10),

@@ -128,11 +128,13 @@ for removed in \
   src/rendezvous_mediator.rs \
   src/kcp_stream.rs \
   src/updater.rs \
+  src/software_update \
   src/custom_server.rs \
   libs/hbb_common/src/proxy.rs \
   libs/hbb_common/src/udp.rs \
   libs/hbb_common/src/websocket.rs \
-  libs/hbb_common/src/webrtc.rs
+  libs/hbb_common/src/webrtc.rs \
+  libs/hbb_common/src/config/permanent_password.rs
 do
   if [[ -e "$removed" ]]; then
     echo "LAN-only residual check failed: removed file exists: $removed" >&2

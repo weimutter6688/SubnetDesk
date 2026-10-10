@@ -82,7 +82,7 @@ struct WebPermissionSet {
 
 fn web_permission_set(profile: &str) -> WebPermissionSet {
     let collaboration = profile.eq_ignore_ascii_case("collaboration");
-    let control = collaboration || !profile.eq_ignore_ascii_case("view-only");
+    let control = collaboration || profile.eq_ignore_ascii_case("control");
     WebPermissionSet {
         keyboard: control,
         clipboard: collaboration,
@@ -6158,7 +6158,13 @@ mod test {
         assert!(!view.file);
         assert!(!view.restart);
 
-        let control = web_permission_set("");
+        for profile in ["", "unknown", "view-only"] {
+            let view = web_permission_set(profile);
+            assert!(!view.keyboard);
+            assert!(!view.clipboard);
+        }
+
+        let control = web_permission_set("control");
         assert!(control.keyboard);
         assert!(!control.clipboard);
         assert!(!control.audio);
