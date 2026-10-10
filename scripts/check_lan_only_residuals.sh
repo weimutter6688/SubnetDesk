@@ -44,27 +44,23 @@ report_matches() {
 job_is_disabled() {
   local job=$1
   local workflow=$2
-  if [[ $has_rg -eq 1 ]]; then
-    local needle
-    printf -v needle '%s:\n    if: ${{ false }}' "$job"
-    rg -U -F -q "$needle" "$workflow"
-  else
-    awk -v job="$job" '
-      {
-        line = $0
-        sub(/^[[:space:]]*/, "", line)
-        sub(/[[:space:]]*$/, "", line)
+  # Trim CRLF as well as LF; Windows checkouts must not report enabled jobs
+  # just because the workflow uses carriage returns.
+  awk -v job="$job" '
+    {
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      sub(/[[:space:]]*$/, "", line)
+    }
+    line == job ":" {
+      if (getline > 0) {
+        sub(/^[[:space:]]*/, "", $0)
+        sub(/[[:space:]]*$/, "", $0)
+        if (index($0, "if: ${{ false }}") == 1) found = 1
       }
-      line == job ":" {
-        if (getline > 0) {
-          sub(/^[[:space:]]*/, "", $0)
-          sub(/[[:space:]]*$/, "", $0)
-          if (index($0, "if: ${{ false }}") == 1) found = 1
-        }
-      }
-      END { exit(found ? 0 : 1) }
-    ' "$workflow"
-  fi
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$workflow"
 }
 
 release_globs=(
@@ -117,6 +113,16 @@ report_matches \
   'raw credential-bearing launch or window arguments in logs' \
   '(launch args:.*\$args|with args .*call\.arguments|android msg.*\$arguments|debugPrint\([^\n]*call\.arguments|Wrong command:.*args)' \
   flutter/lib src/ui.rs
+
+report_matches \
+  'automatic remote image URL fetch in LAN-only UI' \
+  '\b(NetworkImage|Image[.]network)[[:space:]]*\(' \
+  flutter/lib
+
+report_matches \
+  'port forwarding bypasses encrypted framing' \
+  '[.](set_raw|send_bytes)[[:space:]]*\(' \
+  src/port_forward.rs src/server/connection.rs
 
 for removed in \
   src/rendezvous_mediator.rs \
