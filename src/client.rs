@@ -979,6 +979,7 @@ impl AudioHandler {
 /// Video handler for the [`Client`].
 pub struct VideoHandler {
     decoder: Decoder,
+    stream_size: Option<(u32, u32)>,
     pub rgb: ImageRgb,
     pub texture: ImageTexture,
     recorder: Arc<Mutex<Option<Recorder>>>,
@@ -1011,6 +1012,7 @@ impl VideoHandler {
             };
         VideoHandler {
             decoder: Decoder::new(format, luid),
+            stream_size: None,
             rgb: ImageRgb::new(rgba_format, crate::get_dst_align_rgba()),
             texture: Default::default(),
             recorder: Default::default(),
@@ -1030,9 +1032,18 @@ impl VideoHandler {
         chroma: &mut Option<Chroma>,
     ) -> ResultType<bool> {
         let format = CodecFormat::from(&vf);
-        if format != self.decoder.format() {
+        let stream_size = match (vf.stream_width, vf.stream_height) {
+            (0, _) | (_, 0) => None, // Older peers do not send dimensions.
+            size => Some(size),
+        };
+        // GPU decoders may retain surfaces/converters at the previous size.
+        // Rebuild on a stream resize, even when the codec has not changed.
+        if format != self.decoder.format()
+            || (self.stream_size.is_some() && stream_size.is_some() && self.stream_size != stream_size)
+        {
             self.reset(Some(format));
         }
+        self.stream_size = stream_size;
         match &vf.union {
             Some(frame) => {
                 let res = self.decoder.handle_video_frame(

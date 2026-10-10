@@ -1087,6 +1087,8 @@ fn handle_one_frame(
         Ok(mut vf) => {
             *encode_fail_counter = 0;
             vf.display = display as _;
+            vf.stream_width = width as _;
+            vf.stream_height = height as _;
             let mut msg = Message::new();
             msg.set_video_frame(vf);
             recorder
@@ -1383,6 +1385,7 @@ mod tests {
         assert!(fast_rx.try_recv().is_err());
         let (_, msg) = slow_rx.try_recv().unwrap();
         assert!(matches!(&msg.union, Some(message::Union::VideoFrame(_))));
+        assert_eq!((msg.video_frame().stream_width, msg.video_frame().stream_height), (64, 64));
         assert_eq!(viewers[&-102].frame_generation, cache.generation);
         assert_eq!(viewers[&-102].count, 2);
         // An encoder rebuilt for refresh also gets the cached image immediately.
@@ -1449,5 +1452,46 @@ mod tests {
         assert_eq!((decoded.width(), decoded.height()), (640, 360));
         pixels.0.truncate(10);
         assert!(scrap::scaled_to_yuv(&pixels, 640, 360, encoder.yuvfmt(), &mut yuv, &mut mid, &mut scaled).is_err());
+    }
+
+    #[test]
+    fn adaptive_stream_resize_keeps_full_desktop_content() {
+        use scrap::Pixfmt;
+        struct Pixels(Vec<u8>);
+        impl TraitPixelBuffer for Pixels {
+            fn data(&self) -> &[u8] { &self.0 }
+            fn width(&self) -> usize { 1280 }
+            fn height(&self) -> usize { 720 }
+            fn stride(&self) -> Vec<usize> { vec![1280 * 4] }
+            fn pixfmt(&self) -> Pixfmt { Pixfmt::BGRA }
+        }
+        let mut pixels = Pixels(vec![255; 1280 * 720 * 4]);
+        // White desktop with a black upper-left quadrant exposes an accidental
+        // crop/padded small picture when switching down and back up.
+        for y in 0..360 { for x in 0..640 {
+            pixels.0[(y * 1280 + x) * 4..(y * 1280 + x) * 4 + 3].fill(0);
+        }}
+        let mut handler = crate::client::VideoHandler::new(CodecFormat::VP9, 0);
+        let mut pixelbuffer = true;
+        let mut chroma = None;
+        let (mut yuv, mut mid, mut scaled) = (vec![], vec![], vec![]);
+        for (width, height) in [(1280, 720), (640, 360), (1280, 720), (640, 360)] {
+            let mut encoder = Encoder::new(EncoderCfg::VPX(VpxEncoderConfig {
+                width: width as _, height: height as _, quality: 0.5,
+                codec: VpxVideoCodecId::VP9, keyframe_interval: None,
+            }), false).unwrap();
+            scrap::scaled_to_yuv(&pixels, width, height, encoder.yuvfmt(),
+                &mut yuv, &mut mid, &mut scaled).unwrap();
+            let mut frame = encoder.encode_to_message(EncodeInput::YUV(&yuv), 0).unwrap();
+            frame.stream_width = width as _;
+            frame.stream_height = height as _;
+            assert!(handler.handle_frame(frame, &mut pixelbuffer, &mut chroma).unwrap());
+            assert_eq!((handler.rgb.w, handler.rgb.h), (width, height));
+            let at = |x, y| handler.rgb.raw[(y * width + x) * 4];
+            assert!(at(width / 4, height / 4) < 20);
+            assert!(at(width * 3 / 4, height / 4) > 235);
+            assert!(at(width / 4, height * 3 / 4) > 235);
+            assert!(at(width * 3 / 4, height * 3 / 4) > 235);
+        }
     }
 }
