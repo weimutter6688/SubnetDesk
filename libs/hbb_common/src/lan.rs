@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail, Result};
 use sha2::{Digest, Sha256};
 
 pub const DEFAULT_PORT: u16 = 21_118;
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 pub const CREDENTIAL_PAYLOAD_VERSION: u32 = 1;
 pub const NONCE_LEN: usize = 32;
 pub const MAX_ENDPOINT_LEN: usize = 512;

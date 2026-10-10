@@ -11,7 +11,7 @@ use crate::ui_session_interface::{LanIdentityRequest, LanSessionCredential};
 
 const MAX_IDENTITY_NAME_LEN: usize = 64;
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
-const LAN_IDENTITY_KEYRING_SERVICE: &str = "com.zibochen.SubnetDesk.LANIdentities";
+const LAN_IDENTITY_KEYRING_SERVICE: &str = "io.github.weimutter6688.SubnetDesk.LANIdentities";
 
 #[derive(Debug, Serialize)]
 pub struct LanIdentitySummary {

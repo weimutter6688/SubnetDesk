@@ -732,11 +732,7 @@ pub fn get_uri_prefix() -> String {
 
 #[cfg(target_os = "macos")]
 pub fn get_full_name() -> String {
-    format!(
-        "{}.{}",
-        hbb_common::config::ORG.read().unwrap(),
-        hbb_common::config::APP_NAME.read().unwrap(),
-    )
+    "io.github.weimutter6688.subnetdesk".to_owned()
 }
 
 pub fn is_setup(name: &str) -> bool {
@@ -1374,7 +1370,7 @@ pub fn get_builtin_option(key: &str) -> String {
 
 #[inline]
 pub fn is_custom_client() -> bool {
-    !matches!(get_app_name().as_str(), "RustDesk" | "SubnetDesk")
+    false
 }
 
 pub fn verify_login(_raw: &str, _id: &str) -> bool {

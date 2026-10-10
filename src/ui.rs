@@ -42,7 +42,7 @@ pub fn start(args: &mut [String]) {
     #[cfg(all(target_os = "linux", feature = "inline"))]
     {
         let app_dir = std::env::var("APPDIR").unwrap_or("".to_string());
-        let mut so_path = "/usr/share/subnetdesk/libsciter-gtk.so".to_owned();
+        let mut so_path = "/usr/share/subnetdesk-weimutter6688/libsciter-gtk.so".to_owned();
         for (prefix, dir) in [
             ("", "/usr"),
             ("", "/app"),

@@ -126,7 +126,7 @@ fn verify_lan_password_hash(password_hash: &str, password: &[u8]) -> Result<bool
 
 #[cfg(target_os = "macos")]
 lazy_static::lazy_static! {
-pub static ref ORG: RwLock<String> = RwLock::new("com.zibochen".to_owned());
+pub static ref ORG: RwLock<String> = RwLock::new("io.github.weimutter6688".to_owned());
 }
 
 type Size = (i32, i32, i32, i32);
@@ -137,7 +137,7 @@ lazy_static::lazy_static! {
     static ref CONFIG2: RwLock<Config2> = RwLock::new(Config2::load());
     static ref LOCAL_CONFIG: RwLock<LocalConfig> = RwLock::new(LocalConfig::load());
     static ref STATUS: RwLock<Status> = RwLock::new(Status::load());
-    pub static ref APP_NAME: RwLock<String> = RwLock::new("SubnetDesk".to_owned());
+    pub static ref APP_NAME: RwLock<String> = RwLock::new("SubnetDesk-weimutter6688".to_owned());
     static ref KEY_PAIR: Mutex<Option<KeyPair>> = Default::default();
     static ref USER_DEFAULT_CONFIG: RwLock<(UserDefaultConfig, Instant)> = RwLock::new((UserDefaultConfig::load(), Instant::now()));
     pub static ref NEW_STORED_PEER_CONFIG: Mutex<HashSet<String>> = Default::default();

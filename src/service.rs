@@ -1,4 +1,4 @@
-use librustdesk::*;
+use libsubnetdesk_weimutter6688::*;
 
 #[cfg(not(target_os = "macos"))]
 fn main() {}

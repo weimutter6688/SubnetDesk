@@ -4,7 +4,7 @@ set -e
 
 case $1 in
     purge)
-		rm -rf /root/.config/subnetdesk || true
+		rm -rf /root/.config/subnetdesk-weimutter6688 || true
         ;;
 esac
 

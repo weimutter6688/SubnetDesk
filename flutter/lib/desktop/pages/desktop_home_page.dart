@@ -281,9 +281,9 @@ class _LanServerInfoPanelState extends State<LanServerInfoPanel> {
                     const SizedBox(width: 4),
                     IconButton(
                       tooltip: 'LAN · ${translate('Settings')}',
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints.tightFor(
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints.tightFor(
                         width: 28,
                         height: 28,
                       ),
@@ -319,73 +319,73 @@ class _LanServerInfoPanelState extends State<LanServerInfoPanel> {
                 if (offerRemoteActivation || offerPortableInstall) ...[
                   const SizedBox(height: 9),
                   _buildRemoteActions(
-                  windowsPortable: windowsPortable,
-                  offerRemoteActivation: offerRemoteActivation,
-                  offerPortableInstall: offerPortableInstall,
-                ),
-              ],
-              const SizedBox(height: 12),
-              Divider(
-                height: 1,
-                color: isDark ? Colors.white10 : const Color(0xFFF0F2F6),
-              ),
-              const SizedBox(height: 4),
-              _buildCompactInfoRow(
-                icon: Icons.badge_outlined,
-                label: translate('Name'),
-                value: info['device_name']?.toString() ?? '-',
-                muted: muted,
-                trailing: IconButton(
-                  tooltip: translate('Change'),
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 28,
-                    height: 28,
+                    windowsPortable: windowsPortable,
+                    offerRemoteActivation: offerRemoteActivation,
+                    offerPortableInstall: offerPortableInstall,
                   ),
-                  onPressed: () => _showDeviceNameDialog(
-                    context,
-                    systemName: info['system_device_name']?.toString() ?? '',
-                  ),
-                  icon: const Icon(Icons.edit_outlined, size: 15),
+                ],
+                const SizedBox(height: 12),
+                Divider(
+                  height: 1,
+                  color: isDark ? Colors.white10 : const Color(0xFFF0F2F6),
                 ),
-              ),
-              _buildCompactInfoRow(
-                icon: Icons.person_outline_rounded,
-                label: translate('Username'),
-                value: info['username']?.toString() ?? '-',
-                muted: muted,
-              ),
-              _buildCompactInfoRow(
-                icon: Icons.lan_outlined,
-                label: translate('Local Address'),
-                value: primaryAddress == null
-                    ? '-'
-                    : _formatEndpoint(primaryAddress, port),
-                muted: muted,
-                trailing: hiddenAddressCount > 0
-                    ? TextButton(
-                        onPressed: () =>
-                            _showAddressList(context, addresses, port),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 5),
-                          minimumSize: const Size(0, 26),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        child: Text(
-                          '+$hiddenAddressCount',
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                      )
-                    : null,
-              ),
-              if (webAccessEnabled)
+                const SizedBox(height: 4),
                 _buildCompactInfoRow(
-                  icon: Icons.language_rounded,
-                  label: 'Web remote access',
-                  value: webEndpointValues.isEmpty
-                      ? webRuntimeState.toUpperCase()
-                      : '${webRuntimeState.toUpperCase()} · ${webEndpointValues.first}',
+                  icon: Icons.badge_outlined,
+                  label: translate('Name'),
+                  value: info['device_name']?.toString() ?? '-',
+                  muted: muted,
+                  trailing: IconButton(
+                    tooltip: translate('Change'),
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 28,
+                      height: 28,
+                    ),
+                    onPressed: () => _showDeviceNameDialog(
+                      context,
+                      systemName: info['system_device_name']?.toString() ?? '',
+                    ),
+                    icon: const Icon(Icons.edit_outlined, size: 15),
+                  ),
+                ),
+                _buildCompactInfoRow(
+                  icon: Icons.person_outline_rounded,
+                  label: translate('Username'),
+                  value: info['username']?.toString() ?? '-',
+                  muted: muted,
+                ),
+                _buildCompactInfoRow(
+                  icon: Icons.lan_outlined,
+                  label: translate('Local Address'),
+                  value: primaryAddress == null
+                      ? '-'
+                      : _formatEndpoint(primaryAddress, port),
+                  muted: muted,
+                  trailing: hiddenAddressCount > 0
+                      ? TextButton(
+                          onPressed: () =>
+                              _showAddressList(context, addresses, port),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 5),
+                            minimumSize: const Size(0, 26),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: Text(
+                            '+$hiddenAddressCount',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        )
+                      : null,
+                ),
+                if (webAccessEnabled)
+                  _buildCompactInfoRow(
+                    icon: Icons.language_rounded,
+                    label: 'Web remote access',
+                    value: webEndpointValues.isEmpty
+                        ? webRuntimeState.toUpperCase()
+                        : '${webRuntimeState.toUpperCase()} · ${webEndpointValues.first}',
                     muted: muted,
                   ),
               ],
@@ -534,7 +534,7 @@ class _LanServerInfoPanelState extends State<LanServerInfoPanel> {
                   children: [
                     TextButton.icon(
                       onPressed: () => launchUrl(
-                          Uri.parse(runtimeEndpoints.first),
+                        Uri.parse(runtimeEndpoints.first),
                         mode: LaunchMode.externalApplication,
                       ),
                       icon: const Icon(Icons.open_in_browser_rounded, size: 16),
@@ -1282,13 +1282,15 @@ Future<void> showLanSettingsDialog(
                             ),
                           ),
                           Tooltip(
-                            message: 'Off: manual address connections only. '
+                            message:
+                                'Off: manual address connections only. '
                                 'On: advertises device name, OS and fingerprint '
                                 'to the local network and scans for peers.',
                             child: Switch(
                               value: discoveryEnabled,
-                              onChanged: (value) =>
-                                  setDialogState(() => discoveryEnabled = value),
+                              onChanged: (value) => setDialogState(
+                                () => discoveryEnabled = value,
+                              ),
                             ),
                           ),
                         ],
@@ -1406,7 +1408,8 @@ Future<void> showLanSettingsDialog(
                                 ),
                               ],
                               onChanged: (value) => setDialogState(
-                                () => webPermissionProfile = value ?? 'view-only',
+                                () =>
+                                    webPermissionProfile = value ?? 'view-only',
                               ),
                             ),
                             const SizedBox(height: 10),
@@ -1969,11 +1972,17 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   String? _setupIssueHelp(SetupReadinessIssue issue) {
     switch (issue) {
       case SetupReadinessIssue.selinux:
-        return translate('Check SELinux denial records with sudo ausearch -m AVC -ts recent, then allow only the required SubnetDesk operations in the local policy.');
+        return translate(
+          'Check SELinux denial records with sudo ausearch -m AVC -ts recent, then allow only the required SubnetDesk operations in the local policy.',
+        );
       case SetupReadinessIssue.wayland:
-        return translate('Wayland may require local permission for screen capture and input after login. For unattended access, select an X11 session and sign in again.');
+        return translate(
+          'Wayland may require local permission for screen capture and input after login. For unattended access, select an X11 session and sign in again.',
+        );
       case SetupReadinessIssue.loginWayland:
-        return translate('Remote control of a Wayland login screen is not supported. Configure the display manager to use X11 for unattended access.');
+        return translate(
+          'Remote control of a Wayland login screen is not supported. Configure the display manager to use X11 for unattended access.',
+        );
       case SetupReadinessIssue.systemError:
       case SetupReadinessIssue.applicationInstall:
       case SetupReadinessIssue.screenRecording:
@@ -2485,8 +2494,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                   id == null
                       ? Icons.all_inbox_outlined
                       : id == favoriteUngroupedId
-                          ? Icons.folder_off_outlined
-                          : Icons.folder_outlined,
+                      ? Icons.folder_off_outlined
+                      : Icons.folder_outlined,
                   size: 16,
                   color: foreground,
                 ),

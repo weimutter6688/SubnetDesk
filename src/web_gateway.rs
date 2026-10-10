@@ -615,7 +615,7 @@ fn build_certificate_subject_alt_names(
     listen_addresses: &[IpAddr],
     interface_addresses: &[IpAddr],
 ) -> Vec<String> {
-    let mut names = vec!["localhost".to_owned(), "subnetdesk.local".to_owned()];
+    let mut names = vec!["localhost".to_owned(), "subnetdesk-weimutter6688.local".to_owned()];
     names.extend(
         configured_hosts
             .split(',')
@@ -828,7 +828,7 @@ fn generate_leaf_certificate(
     let mut params = CertificateParams::new(subject_alt_names.to_vec())
         .context("Failed to configure Web certificate names")?;
     let mut distinguished_name = DistinguishedName::new();
-    distinguished_name.push(DnType::CommonName, "subnetdesk.local");
+    distinguished_name.push(DnType::CommonName, "subnetdesk-weimutter6688.local");
     params.distinguished_name = distinguished_name;
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];

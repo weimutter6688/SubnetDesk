@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const SERVICE_TYPE: &str = "_subnetdesk._tcp.local.";
+const SERVICE_TYPE: &str = "_sd-w6688._tcp.local.";
 const BROWSE_DURATION: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Debug, Eq, PartialEq)]

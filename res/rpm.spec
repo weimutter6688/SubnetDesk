@@ -1,4 +1,4 @@
-Name:       subnetdesk
+Name:       subnetdesk-weimutter6688
 Version:    1.3.0
 Release:    0
 Summary:    RPM package
@@ -23,27 +23,27 @@ The best open-source remote desktop client software, written in Rust.
 
 %install
 mkdir -p %{buildroot}/usr/bin/
-mkdir -p %{buildroot}/usr/share/subnetdesk/
-mkdir -p %{buildroot}/usr/share/subnetdesk/files/
+mkdir -p %{buildroot}/usr/share/subnetdesk-weimutter6688/
+mkdir -p %{buildroot}/usr/share/subnetdesk-weimutter6688/files/
 mkdir -p %{buildroot}/usr/share/icons/hicolor/256x256/apps/
 mkdir -p %{buildroot}/usr/share/icons/hicolor/scalable/apps/
-install -m 755 $HBB/target/release/rustdesk %{buildroot}/usr/bin/subnetdesk
-install $HBB/libsciter-gtk.so %{buildroot}/usr/share/subnetdesk/libsciter-gtk.so
-install $HBB/res/subnetdesk.service %{buildroot}/usr/share/subnetdesk/files/
-install $HBB/res/128x128@2x.png %{buildroot}/usr/share/icons/hicolor/256x256/apps/subnetdesk.png
-install $HBB/res/scalable.svg %{buildroot}/usr/share/icons/hicolor/scalable/apps/subnetdesk.svg
-install $HBB/res/rustdesk.desktop %{buildroot}/usr/share/subnetdesk/files/subnetdesk.desktop
-install $HBB/res/rustdesk-link.desktop %{buildroot}/usr/share/subnetdesk/files/subnetdesk-link.desktop
+install -m 755 $HBB/target/release/rustdesk %{buildroot}/usr/bin/subnetdesk-weimutter6688
+install $HBB/libsciter-gtk.so %{buildroot}/usr/share/subnetdesk-weimutter6688/libsciter-gtk.so
+install $HBB/res/subnetdesk-weimutter6688.service %{buildroot}/usr/share/subnetdesk-weimutter6688/files/
+install $HBB/res/128x128@2x.png %{buildroot}/usr/share/icons/hicolor/256x256/apps/subnetdesk-weimutter6688.png
+install $HBB/res/scalable.svg %{buildroot}/usr/share/icons/hicolor/scalable/apps/subnetdesk-weimutter6688.svg
+install $HBB/res/rustdesk.desktop %{buildroot}/usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688.desktop
+install $HBB/res/rustdesk-link.desktop %{buildroot}/usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688-link.desktop
 
 %files
-/usr/bin/subnetdesk
-/usr/share/subnetdesk/libsciter-gtk.so
-/usr/share/subnetdesk/files/subnetdesk.service
-/usr/share/icons/hicolor/256x256/apps/subnetdesk.png
-/usr/share/icons/hicolor/scalable/apps/subnetdesk.svg
-/usr/share/subnetdesk/files/subnetdesk.desktop
-/usr/share/subnetdesk/files/subnetdesk-link.desktop
-/usr/share/subnetdesk/files/__pycache__/*
+/usr/bin/subnetdesk-weimutter6688
+/usr/share/subnetdesk-weimutter6688/libsciter-gtk.so
+/usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688.service
+/usr/share/icons/hicolor/256x256/apps/subnetdesk-weimutter6688.png
+/usr/share/icons/hicolor/scalable/apps/subnetdesk-weimutter6688.svg
+/usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688.desktop
+/usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688-link.desktop
+/usr/share/subnetdesk-weimutter6688/files/__pycache__/*
 
 %changelog
 # let's skip this for now
@@ -56,26 +56,26 @@ case "$1" in
   ;;
   2)
     # for upgrade
-    systemctl stop subnetdesk || true
+    systemctl stop subnetdesk-weimutter6688 || true
   ;;
 esac
 
 %post
-cp /usr/share/subnetdesk/files/subnetdesk.service /etc/systemd/system/subnetdesk.service
-cp /usr/share/subnetdesk/files/subnetdesk.desktop /usr/share/applications/
-cp /usr/share/subnetdesk/files/subnetdesk-link.desktop /usr/share/applications/
+cp /usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688.service /etc/systemd/system/subnetdesk-weimutter6688.service
+cp /usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688.desktop /usr/share/applications/
+cp /usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688-link.desktop /usr/share/applications/
 systemctl daemon-reload
-systemctl enable subnetdesk
-systemctl start subnetdesk
+systemctl enable subnetdesk-weimutter6688
+systemctl start subnetdesk-weimutter6688
 update-desktop-database
 
 %preun
 case "$1" in
   0)
     # for uninstall
-    systemctl stop subnetdesk || true
-    systemctl disable subnetdesk || true
-    rm /etc/systemd/system/subnetdesk.service || true
+    systemctl stop subnetdesk-weimutter6688 || true
+    systemctl disable subnetdesk-weimutter6688 || true
+    rm /etc/systemd/system/subnetdesk-weimutter6688.service || true
   ;;
   1)
     # for upgrade
@@ -86,8 +86,8 @@ esac
 case "$1" in
   0)
     # for uninstall
-    rm /usr/share/applications/subnetdesk.desktop || true
-    rm /usr/share/applications/subnetdesk-link.desktop || true
+    rm /usr/share/applications/subnetdesk-weimutter6688.desktop || true
+    rm /usr/share/applications/subnetdesk-weimutter6688-link.desktop || true
     update-desktop-database
   ;;
   1)

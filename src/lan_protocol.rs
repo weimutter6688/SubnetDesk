@@ -12,7 +12,7 @@ use hbb_common::{
     tcp, timeout, ResultType, Stream,
 };
 
-const TRANSCRIPT_PREFIX: &[u8] = b"rustdesk-lan-handshake-v2\0";
+const TRANSCRIPT_PREFIX: &[u8] = b"subnetdesk-weimutter6688-lan-handshake-v3\0";
 pub(crate) const MAX_AUTH_PACKET_LENGTH: usize = 64 * 1024;
 
 pub struct LanPeerIdentity {
@@ -237,6 +237,7 @@ mod tests {
     #[test]
     fn protocol_downgrade_is_rejected() {
         assert!(require_protocol_version(PROTOCOL_VERSION, "client").is_ok());
+        assert!(require_protocol_version(1, "client").is_err());
         assert!(require_protocol_version(PROTOCOL_VERSION.saturating_sub(1), "client").is_err());
         assert!(require_protocol_version(PROTOCOL_VERSION + 1, "server").is_err());
     }

@@ -3,7 +3,7 @@
     windows_subsystem = "windows"
 )]
 
-use librustdesk::*;
+use libsubnetdesk_weimutter6688::*;
 
 #[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 fn main() {

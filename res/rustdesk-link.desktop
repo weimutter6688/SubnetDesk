@@ -1,11 +1,11 @@
 [Desktop Entry]
 Name=SubnetDesk
 NoDisplay=true
-MimeType=x-scheme-handler/subnetdesk;
-TryExec=subnetdesk
-Exec=subnetdesk %u
-Icon=subnetdesk
+MimeType=x-scheme-handler/subnetdesk-weimutter6688;
+TryExec=subnetdesk-weimutter6688
+Exec=subnetdesk-weimutter6688 %u
+Icon=subnetdesk-weimutter6688
 Terminal=false
 Type=Application
 StartupNotify=false
-StartupWMClass=subnetdesk
+StartupWMClass=subnetdesk-weimutter6688

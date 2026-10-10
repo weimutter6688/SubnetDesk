@@ -2,27 +2,27 @@
 version: 1
 script:
  - rm -rf ./AppDir || true
- - bsdtar -zxvf subnetdesk.deb
+ - bsdtar -zxvf subnetdesk-weimutter6688.deb
  - tar -xvf ./data.tar.xz
  - mkdir ./AppDir
  - mv ./usr ./AppDir/usr
  # 32x32 icon
- - for i in {32,64,128}; do mkdir -p ./AppDir/usr/share/icons/hicolor/$i\x$i/apps/; cp ../res/$i\x$i.png ./AppDir/usr/share/icons/hicolor/$i\x$i/apps/subnetdesk.png; done
- - mkdir -p ./AppDir/usr/share/icons/hicolor/scalable/apps/; cp ../res/scalable.svg ./AppDir/usr/share/icons/hicolor/scalable/apps/subnetdesk.svg
+ - for i in {32,64,128}; do mkdir -p ./AppDir/usr/share/icons/hicolor/$i\x$i/apps/; cp ../res/$i\x$i.png ./AppDir/usr/share/icons/hicolor/$i\x$i/apps/subnetdesk-weimutter6688.png; done
+ - mkdir -p ./AppDir/usr/share/icons/hicolor/scalable/apps/; cp ../res/scalable.svg ./AppDir/usr/share/icons/hicolor/scalable/apps/subnetdesk-weimutter6688.svg
  - rm -rf ./AppDir/usr/share/applications
 AppDir:
   path: ./AppDir
   app_info:
-    id: subnetdesk
-    name: subnetdesk
-    icon: subnetdesk
+    id: subnetdesk-weimutter6688
+    name: subnetdesk-weimutter6688
+    icon: subnetdesk-weimutter6688
     version: 1.3.0
-    exec: usr/share/subnetdesk/subnetdesk
+    exec: usr/share/subnetdesk-weimutter6688/subnetdesk-weimutter6688
     exec_args: $@
   apt:
     arch:
     - arm64
-    allow_unauthenticated: true
+    allow_unauthenticated: false
     sources:
     - sourceline: deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal main restricted universe multiverse
       key_url: 'http://keyserver.ubuntu.com/pks/lookup?op=get&search=0x3b4fe6acc0b21f32'
@@ -75,7 +75,7 @@ AppDir:
     env:
       GIO_MODULE_DIR: /lib64/gio/modules:/usr/lib/aarch64-linux-gnu/gio/modules:$APPDIR/usr/lib/aarch64-linux-gnu/gio/modules
       GDK_BACKEND: x11
-      APPDIR_LIBRARY_PATH: /lib64:/usr/lib/aarch64-linux-gnu:$APPDIR/lib/aarch64-linux-gnu:$APPDIR/lib/aarch64-linux-gnu/security:$APPDIR/lib/systemd:$APPDIR/usr/lib/aarch64-linux-gnu:$APPDIR/usr/lib/aarch64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders:$APPDIR/usr/lib/aarch64-linux-gnu/gstreamer-1.0:$APPDIR/usr/lib/aarch64-linux-gnu/gtk-3.0/3.0.0/immodules:$APPDIR/usr/lib/aarch64-linux-gnu/gtk-3.0/3.0.0/printbackends:$APPDIR/usr/lib/aarch64-linux-gnu/krb5/plugins/preauth:$APPDIR/usr/lib/aarch64-linux-gnu/libcanberra-0.30:$APPDIR/usr/lib/aarch64-linux-gnu/pulseaudio:$APPDIR/usr/lib/aarch64-linux-gnu/sasl2:$APPDIR/usr/lib/aarch64-linux-gnu/vdpau:$APPDIR/usr/share/subnetdesk/lib:$APPDIR/lib/aarch64
+      APPDIR_LIBRARY_PATH: /lib64:/usr/lib/aarch64-linux-gnu:$APPDIR/lib/aarch64-linux-gnu:$APPDIR/lib/aarch64-linux-gnu/security:$APPDIR/lib/systemd:$APPDIR/usr/lib/aarch64-linux-gnu:$APPDIR/usr/lib/aarch64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders:$APPDIR/usr/lib/aarch64-linux-gnu/gstreamer-1.0:$APPDIR/usr/lib/aarch64-linux-gnu/gtk-3.0/3.0.0/immodules:$APPDIR/usr/lib/aarch64-linux-gnu/gtk-3.0/3.0.0/printbackends:$APPDIR/usr/lib/aarch64-linux-gnu/krb5/plugins/preauth:$APPDIR/usr/lib/aarch64-linux-gnu/libcanberra-0.30:$APPDIR/usr/lib/aarch64-linux-gnu/pulseaudio:$APPDIR/usr/lib/aarch64-linux-gnu/sasl2:$APPDIR/usr/lib/aarch64-linux-gnu/vdpau:$APPDIR/usr/share/subnetdesk-weimutter6688/lib:$APPDIR/lib/aarch64
       GST_PLUGIN_PATH: /lib64/gstreamer-1.0:/usr/lib/aarch64-linux-gnu/gstreamer-1.0:$APPDIR/usr/lib/aarch64-linux-gnu/gstreamer-1.0
       GST_PLUGIN_SYSTEM_PATH: /lib64/gstreamer-1.0:/usr/lib/aarch64-linux-gnu/gstreamer-1.0:$APPDIR/usr/lib/aarch64-linux-gnu/gstreamer-1.0
   test:

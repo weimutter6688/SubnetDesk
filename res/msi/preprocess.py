@@ -27,15 +27,15 @@ g_arpsystemcomponent = {
     },
     "Contact": {
         "msi": "ARPCONTACT",
-        "v": "https://github.com/rustdesk/rustdesk",
+        "v": "https://github.com/weimutter6688/SubnetDesk",
     },
     "HelpLink": {
         "msi": "ARPHELPLINK",
-        "v": "https://github.com/rustdesk/rustdesk/issues/",
+        "v": "https://github.com/weimutter6688/SubnetDesk/issues/",
     },
     "ReadMe": {
         "msi": "ARPREADME",
-        "v": "https://github.com/rustdesk/rustdesk",
+        "v": "https://github.com/weimutter6688/SubnetDesk",
     },
 }
 
@@ -73,7 +73,10 @@ def make_parser():
         help='Connection type, e.g. "incoming", "outgoing". Default is empty, means incoming-outgoing',
     )
     parser.add_argument(
-        "--app-name", type=str, default="SubnetDesk", help="The app name."
+        "--app-name", type=str, default="SubnetDesk-weimutter6688", help="The internal executable and installation identity."
+    )
+    parser.add_argument(
+        "--display-name", type=str, default="SubnetDesk", help="The visible product name."
     )
     parser.add_argument(
         "-v", "--version", type=str, default="", help="The app version."
@@ -159,7 +162,8 @@ def gen_pre_vars(args, dist_dir):
             f'{indent}<?define Version="{g_version}" ?>\n',
             f'{indent}<?define Manufacturer="{args.manufacturer}" ?>\n',
             f'{indent}<?define Product="{args.app_name}" ?>\n',
-            f'{indent}<?define Description="{args.app_name} Installer" ?>\n',
+            f'{indent}<?define DisplayName="{args.display_name}" ?>\n',
+            f'{indent}<?define Description="{args.display_name} Installer" ?>\n',
             f'{indent}<?define ProductLower="{args.app_name.lower()}" ?>\n',
             f'{indent}<?define RegKeyRoot=".$(var.ProductLower)" ?>\n',
             f'{indent}<?define RegKeyInstall="$(var.RegKeyRoot)\\Install" ?>\n',
@@ -311,7 +315,7 @@ def gen_custom_ARPSYSTEMCOMPONENT_True(args, dist_dir):
             f"{indent}<!--https://learn.microsoft.com/en-us/windows/win32/msi/property-reference-->\n"
         )
         lines_new.append(
-            f'{indent}<RegistryValue Type="string" Name="DisplayName" Value="{args.app_name}" />\n'
+            f'{indent}<RegistryValue Type="string" Name="DisplayName" Value="{args.display_name}" />\n'
         )
         lines_new.append(
             f'{indent}<RegistryValue Type="string" Name="DisplayIcon" Value="[INSTALLFOLDER_INNER]{args.app_name}.exe" />\n'
@@ -556,5 +560,5 @@ if __name__ == "__main__":
     if not gen_custom_dialog_bitmaps():
         sys.exit(-1)
 
-    replace_app_name_in_langs(args.app_name)
+    replace_app_name_in_langs(args.display_name)
     replace_app_name_in_custom_actions(args.app_name)

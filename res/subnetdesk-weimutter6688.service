@@ -5,9 +5,9 @@ After=systemd-user-sessions.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/subnetdesk --service
-ExecStop=/usr/bin/pkill -f "subnetdesk --"
-PIDFile=/run/subnetdesk.pid
+ExecStart=/usr/bin/subnetdesk-weimutter6688 --service
+ExecStop=/usr/bin/pkill -f "subnetdesk-weimutter6688 --"
+PIDFile=/run/subnetdesk-weimutter6688.pid
 KillMode=mixed
 TimeoutStopSec=30
 User=root

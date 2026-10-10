@@ -15,7 +15,7 @@ test("browser handshake interoperates with libsodium box and secretbox primitive
   const signature = sodium.crypto_sign(transcript, device.privateKey);
 
   const accepted = await client.acceptServerHello({
-    protocol_version: 2,
+    protocol_version: 3,
     server_nonce: serverNonce,
     device_public_key: device.publicKey,
     ephemeral_public_key: ephemeral.publicKey,
@@ -50,7 +50,7 @@ test("browser handshake interoperates with libsodium box and secretbox primitive
 
 test("browser rejects old protocol peers without a downgrade", async () => {
   const client = await LanCryptoSession.create();
-  expect(Message.decode(client.clientHello()).lan_client_hello?.protocol_version).toBe(2);
+  expect(Message.decode(client.clientHello()).lan_client_hello?.protocol_version).toBe(3);
   await expect(client.acceptServerHello({
     protocol_version: 1,
     server_nonce: new Uint8Array(32),
@@ -66,7 +66,7 @@ test("browser rejects reflection of its own outbound ciphertext", async () => {
   const ephemeral = sodium.crypto_box_keypair();
   const serverNonce = sodium.randombytes_buf(32);
   await client.acceptServerHello({
-    protocol_version: 2,
+    protocol_version: 3,
     server_nonce: serverNonce,
     device_public_key: device.publicKey,
     ephemeral_public_key: ephemeral.publicKey,

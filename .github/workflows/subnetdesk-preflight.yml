@@ -21,8 +21,6 @@ jobs:
     steps:
       - name: Checkout source code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          submodules: recursive
 
       - name: Check LAN-only residuals
         run: bash scripts/check_lan_only_residuals.sh
@@ -51,12 +49,12 @@ jobs:
           sed -n '/^  build-for-windows-flutter:/,/^  build-for-windows-sciter:/p' .github/workflows/flutter-build.yml | grep -Fq 'toolchain: ${{ env.RUST_VERSION }}'
           ! sed -n '/^  build-for-windows-flutter:/,/^  build-for-windows-sciter:/p' .github/workflows/flutter-build.yml | grep -Fq 'toolchain: ${{ env.SCITER_RUST_VERSION }}'
           for artifact in \
-            'name: subnetdesk-windows-' \
-            'name: subnetdesk-macos-' \
-            'name: subnetdesk-linux-rpm-' \
-            'name: subnetdesk-archlinux-' \
-            'name: subnetdesk-appimage-' \
-            'name: subnetdesk-flatpak-'
+            'name: subnetdesk-weimutter6688-windows-' \
+            'name: subnetdesk-weimutter6688-macos-' \
+            'name: subnetdesk-weimutter6688-linux-rpm-' \
+            'name: subnetdesk-weimutter6688-archlinux-' \
+            'name: subnetdesk-weimutter6688-appimage-' \
+            'name: subnetdesk-weimutter6688-flatpak-'
           do
             grep -Fq "$artifact" .github/workflows/flutter-build.yml
           done

@@ -5,10 +5,10 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = SubnetDesk
+PRODUCT_NAME = SubnetDesk-weimutter6688
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.zibochen.subnetdesk
+PRODUCT_BUNDLE_IDENTIFIER = io.github.weimutter6688.subnetdesk
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 Purslane Tech Pte. Ltd. All rights reserved.

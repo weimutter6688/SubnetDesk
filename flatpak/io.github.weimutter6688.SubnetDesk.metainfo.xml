@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>com.zibochen.SubnetDesk</id>
-  <developer id="com.zibochen">
+  <id>io.github.weimutter6688.SubnetDesk</id>
+  <developer id="io.github.weimutter6688">
     <name>SubnetDesk contributors</name>
   </developer>
-  <launchable type="desktop-id">com.zibochen.SubnetDesk.desktop</launchable>
+  <launchable type="desktop-id">io.github.weimutter6688.SubnetDesk.desktop</launchable>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>AGPL-3.0-only</project_license>
   <name>SubnetDesk</name>

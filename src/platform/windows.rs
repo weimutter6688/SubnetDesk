@@ -1238,8 +1238,8 @@ pub fn portable_service_logon_helper_paths() -> Option<(PathBuf, PathBuf)> {
         .home_dir()
         .join("AppData")
         .join("Local")
-        .join("rustdesk-sciter");
-    let dst = dir.join("rustdesk.exe");
+        .join("subnetdesk-weimutter6688-sciter");
+    let dst = dir.join("SubnetDesk-weimutter6688.exe");
     Some((dir, dst))
 }
 

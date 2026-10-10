@@ -32,10 +32,10 @@
 			<key>CFBundleURLIconFile</key>
 			<string></string>
 			<key>CFBundleURLName</key>
-			<string>com.zibochen.subnetdesk</string>
+			<string>io.github.weimutter6688.subnetdesk</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>subnetdesk</string>
+				<string>subnetdesk-weimutter6688</string>
 			</array>
 		</dict>
 	</array>

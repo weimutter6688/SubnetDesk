@@ -5,43 +5,43 @@
 # arg 1:  the new package version
 post_install() {
 	# do something here
-	cp /usr/share/subnetdesk/files/subnetdesk.service /etc/systemd/system/subnetdesk.service
-	cp /usr/share/subnetdesk/files/subnetdesk.desktop /usr/share/applications/
-	cp /usr/share/subnetdesk/files/subnetdesk-link.desktop /usr/share/applications/
+	cp /usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688.service /etc/systemd/system/subnetdesk-weimutter6688.service
+	cp /usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688.desktop /usr/share/applications/
+	cp /usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688-link.desktop /usr/share/applications/
 	systemctl daemon-reload
-	systemctl enable subnetdesk
-	systemctl start subnetdesk
+	systemctl enable subnetdesk-weimutter6688
+	systemctl start subnetdesk-weimutter6688
 	update-desktop-database
 }
 
 # arg 1:  the new package version
 # arg 2:  the old package version
 pre_upgrade() {
-	systemctl stop subnetdesk || true
+	systemctl stop subnetdesk-weimutter6688 || true
 }
 
 # arg 1:  the new package version
 # arg 2:  the old package version
 post_upgrade() {
-	cp /usr/share/subnetdesk/files/subnetdesk.service /etc/systemd/system/subnetdesk.service
-	cp /usr/share/subnetdesk/files/subnetdesk.desktop /usr/share/applications/
-	cp /usr/share/subnetdesk/files/subnetdesk-link.desktop /usr/share/applications/
+	cp /usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688.service /etc/systemd/system/subnetdesk-weimutter6688.service
+	cp /usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688.desktop /usr/share/applications/
+	cp /usr/share/subnetdesk-weimutter6688/files/subnetdesk-weimutter6688-link.desktop /usr/share/applications/
 	systemctl daemon-reload
-	systemctl enable subnetdesk
-	systemctl start subnetdesk
+	systemctl enable subnetdesk-weimutter6688
+	systemctl start subnetdesk-weimutter6688
 	update-desktop-database
 }
 
 # arg 1:  the old package version
 pre_remove() {
-	systemctl stop subnetdesk || true
-	systemctl disable subnetdesk || true
-	rm /etc/systemd/system/subnetdesk.service || true
+	systemctl stop subnetdesk-weimutter6688 || true
+	systemctl disable subnetdesk-weimutter6688 || true
+	rm /etc/systemd/system/subnetdesk-weimutter6688.service || true
 }
 
 # arg 1:  the old package version
 post_remove() {
-	rm /usr/share/applications/subnetdesk.desktop || true
-	rm /usr/share/applications/subnetdesk-link.desktop || true
+	rm /usr/share/applications/subnetdesk-weimutter6688.desktop || true
+	rm /usr/share/applications/subnetdesk-weimutter6688-link.desktop || true
 	update-desktop-database
 }

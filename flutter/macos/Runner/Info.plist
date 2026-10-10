@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleDisplayName</key>
+	<string>SubnetDesk</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>
@@ -26,10 +28,10 @@
 			<key>CFBundleURLIconFile</key>
 			<string></string>
 			<key>CFBundleURLName</key>
-			<string>com.zibochen.subnetdesk</string>
+			<string>io.github.weimutter6688.subnetdesk</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>subnetdesk</string>
+				<string>subnetdesk-weimutter6688</string>
 			</array>
 		</dict>
 	</array>
@@ -47,7 +49,7 @@
 	<string>SubnetDesk uses your local network to discover and connect to nearby devices for remote access.</string>
 	<key>NSBonjourServices</key>
 	<array>
-		<string>_subnetdesk._tcp</string>
+		<string>_sd-w6688._tcp</string>
 	</array>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
