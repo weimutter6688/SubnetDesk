@@ -27,6 +27,8 @@ use video_service::VideoSource;
 
 use crate::ipc::Data;
 
+const MAX_PENDING_AUTHENTICATIONS: usize = 64;
+
 pub mod audio_service;
 #[cfg(target_os = "windows")]
 pub mod terminal_helper;
@@ -88,6 +90,8 @@ const CONFIG_SYNC_INTERVAL_SECS: f32 = 0.3;
 const CONFIG_SYNC_INITIAL_WAIT_SECS: u64 = 3;
 
 lazy_static::lazy_static! {
+    static ref PENDING_AUTHENTICATIONS: Arc<tokio::sync::Semaphore> =
+        Arc::new(tokio::sync::Semaphore::new(MAX_PENDING_AUTHENTICATIONS));
     pub static ref CHILD_PROCESS: Childs = Default::default();
     // A client server used to provide local services(audio, video, clipboard, etc.)
     // for all initiative connections.
@@ -150,6 +154,8 @@ pub async fn create_lan_connection(
     addr: SocketAddr,
     web_client: bool,
 ) -> ResultType<()> {
+    let auth_permit = PENDING_AUTHENTICATIONS.clone().try_acquire_owned()
+        .map_err(|_| hbb_common::anyhow::anyhow!("Too many unauthenticated LAN connections"))?;
     crate::lan_protocol::server_handshake(&mut stream).await?;
     #[cfg(target_os = "macos")]
     {
@@ -169,6 +175,7 @@ pub async fn create_lan_connection(
         id,
         Arc::downgrade(&server),
         ConnectionMeta { web_client },
+        auth_permit,
     )
     .await;
     Ok(())

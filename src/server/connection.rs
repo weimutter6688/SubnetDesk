@@ -307,6 +307,7 @@ pub struct Connection {
     port_forward_address: String,
     tx_to_cm: mpsc::UnboundedSender<ipc::Data>,
     authorized: bool,
+    auth_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     web_client: bool,
     keyboard: bool,
     clipboard: bool,
@@ -466,6 +467,7 @@ impl Connection {
         id: i32,
         server: super::ServerPtrWeak,
         meta: super::ConnectionMeta,
+        auth_permit: tokio::sync::OwnedSemaphorePermit,
     ) {
         let _raii_id = raii::ConnectionID::new(id);
         let (tx_from_cm_holder, mut rx_from_cm) = mpsc::unbounded_channel::<ipc::Data>();
@@ -504,6 +506,7 @@ impl Connection {
             port_forward_address: "".to_owned(),
             tx_to_cm,
             authorized: false,
+            auth_permit: Some(auth_permit),
             web_client: meta.web_client,
             keyboard: true,
             clipboard: true,
@@ -598,6 +601,8 @@ impl Connection {
         // The display is set only for video, so other messages cannot ACK it.
         let mut pending_send: Option<(Instant, Option<usize>)> = None;
         let mut second_timer = crate::rustdesk_interval(time::interval(Duration::from_secs(1)));
+        let authentication_deadline = time::sleep(Duration::from_secs(120));
+        tokio::pin!(authentication_deadline);
 
         #[cfg(feature = "unix-file-copy-paste")]
         let rx_clip_holder;
@@ -623,6 +628,10 @@ impl Connection {
 
         loop {
             tokio::select! {
+                _ = &mut authentication_deadline, if !conn.authorized => {
+                    conn.on_close("Authentication timed out", true).await;
+                    break;
+                }
                 // biased; // video has higher priority // causing test_delay_timer failed while transferring big file
 
                 Some(data) = rx_from_cm.recv() => {
@@ -1272,6 +1281,8 @@ impl Connection {
             return false;
         }
         self.authorized = true;
+        self.stream.set_max_packet_length(hbb_common::bytes_codec::MAX_FRAME_LENGTH);
+        drop(self.auth_permit.take());
         let (conn_type, auth_conn_type) = if self.file_transfer.is_some() {
             (1, AuthConnType::FileTransfer)
         } else if self.port_forward_socket.is_some() {

@@ -13,6 +13,7 @@ use hbb_common::{
 };
 
 const TRANSCRIPT_PREFIX: &[u8] = b"rustdesk-lan-handshake-v2\0";
+pub(crate) const MAX_AUTH_PACKET_LENGTH: usize = 64 * 1024;
 
 pub struct LanPeerIdentity {
     pub device_public_key: Vec<u8>,
@@ -56,6 +57,7 @@ pub fn fingerprint(device_public_key: &[u8]) -> String {
 }
 
 pub async fn client_handshake(stream: &mut Stream) -> ResultType<LanPeerIdentity> {
+    stream.set_max_packet_length(MAX_AUTH_PACKET_LENGTH);
     let client_nonce = randombytes::randombytes(NONCE_LEN);
     let mut hello = Message::new();
     hello.set_lan_client_hello(LanClientHello {
@@ -106,6 +108,7 @@ pub async fn client_handshake(stream: &mut Stream) -> ResultType<LanPeerIdentity
     stream.set_key(key, tcp::EndpointRole::Client);
 
     let device_public_key = server_hello.device_public_key.to_vec();
+    stream.set_max_packet_length(hbb_common::bytes_codec::MAX_FRAME_LENGTH);
     Ok(LanPeerIdentity {
         fingerprint: fingerprint(&device_public_key),
         device_public_key,
@@ -129,6 +132,8 @@ async fn server_handshake_with_identity(
     device_secret_key: &sign::SecretKey,
     device_public_key: &sign::PublicKey,
 ) -> ResultType<()> {
+    // Keep this bound through account authentication, not just key exchange.
+    stream.set_max_packet_length(MAX_AUTH_PACKET_LENGTH);
     let bytes = timeout(READ_TIMEOUT, stream.next())
         .await?
         .ok_or_else(|| anyhow!("Handshake failed: client closed the connection"))??;
@@ -190,6 +195,7 @@ mod tests {
             self,
             io::{AsyncReadExt, AsyncWriteExt},
             net::{TcpListener, TcpStream},
+            time::Duration,
         },
     };
     use std::sync::{Arc, Mutex};
@@ -233,6 +239,51 @@ mod tests {
         assert!(require_protocol_version(PROTOCOL_VERSION, "client").is_ok());
         assert!(require_protocol_version(PROTOCOL_VERSION.saturating_sub(1), "client").is_err());
         assert!(require_protocol_version(PROTOCOL_VERSION + 1, "server").is_err());
+    }
+
+    #[tokio::test]
+    async fn oversized_handshake_headers_are_rejected_without_waiting_for_payloads() {
+        let _ = hbb_common::sodiumoxide::init();
+        let (public, secret) = sign::gen_keypair();
+        for client_role in [false, true] {
+            let (socket, mut remote) = tokio::io::duplex(1024);
+            let mut stream = Stream::from_framed(tcp::FramedStream::from(
+                socket,
+                "127.0.0.1:21118".parse().unwrap(),
+            ));
+            let header = (((MAX_AUTH_PACKET_LENGTH + 1) << 2) as u32 | 3).to_le_bytes();
+            remote.write_all(&header).await.unwrap();
+            let result = tokio::time::timeout(Duration::from_secs(1), async {
+                if client_role {
+                    client_handshake(&mut stream).await.map(|_| ())
+                } else {
+                    server_handshake_with_identity(&mut stream, &secret, &public).await
+                }
+            }).await.unwrap();
+            assert!(result.unwrap_err().to_string().contains("Too big packet"));
+        }
+    }
+
+    #[tokio::test]
+    async fn key_exchange_does_not_remove_the_unauthenticated_packet_limit() {
+        let _ = hbb_common::sodiumoxide::init();
+        let (public, secret) = sign::gen_keypair();
+        let (server_socket, client_socket) = tokio::io::duplex(128 * 1024);
+        let address = "127.0.0.1:21118".parse().unwrap();
+        let mut server = Stream::from_framed(tcp::FramedStream::from(server_socket, address));
+        let mut client = Stream::from_framed(tcp::FramedStream::from(client_socket, address));
+        let server_task = async {
+            server_handshake_with_identity(&mut server, &secret, &public).await.unwrap();
+            server.next().await.unwrap().unwrap_err()
+        };
+        let client_task = async {
+            client_handshake(&mut client).await.unwrap();
+            client.send_raw(vec![0; MAX_AUTH_PACKET_LENGTH + 1]).await.unwrap();
+        };
+        let (error, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(server_task, client_task)
+        }).await.unwrap();
+        assert!(error.to_string().contains("Too big packet"));
     }
 
     #[tokio::test]
