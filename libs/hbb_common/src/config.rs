@@ -69,6 +69,10 @@ pub fn is_lan_only_obsolete_option(key: &str) -> bool {
             | "enable-udp-punch"
             | "enable-ipv6-punch"
             | "allow-websocket"
+            | "enable-webrtc"
+            | "allow-webrtc-congestion-control"
+            | "ice-servers"
+            | "disable-change-permanent-password"
             | "force-always-relay"
             | "access-token"
             | "direct-server"
@@ -1169,15 +1173,6 @@ impl Config {
             .unwrap()
             .get(keys::OPTION_REGISTER_DEVICE)
             .map(|v| v == "N")
-            .unwrap_or(false)
-    }
-
-    pub fn is_disable_change_permanent_password() -> bool {
-        BUILTIN_SETTINGS
-            .read()
-            .unwrap()
-            .get(keys::OPTION_DISABLE_CHANGE_PERMANENT_PASSWORD)
-            .map(|v| v == "Y")
             .unwrap_or(false)
     }
 
@@ -2886,8 +2881,6 @@ pub mod keys {
     // "failed-*" flips the texture-render default to opt-in on this machine.
     pub const OPTION_TEXTURE_RENDER_HEALTH: &str = "texture-render-health";
     pub const OPTION_ALLOW_D3D_RENDER: &str = "allow-d3d-render";
-    pub const OPTION_ENABLE_CHECK_UPDATE: &str = "enable-check-update";
-    pub const OPTION_ALLOW_AUTO_UPDATE: &str = "allow-auto-update";
     pub const OPTION_SYNC_AB_WITH_RECENT_SESSIONS: &str = "sync-ab-with-recent-sessions";
     pub const OPTION_SYNC_AB_TAGS: &str = "sync-ab-tags";
     pub const OPTION_FILTER_AB_BY_INTERSECTION: &str = "filter-ab-by-intersection";
@@ -2957,7 +2950,6 @@ pub mod keys {
     pub const OPTION_TRACKPAD_SPEED: &str = "trackpad-speed";
     pub const OPTION_REGISTER_DEVICE: &str = "register-device";
     pub const OPTION_RELAY_SERVER: &str = "relay-server";
-    pub const OPTION_ICE_SERVERS: &str = "ice-servers";
     /// Maximum number of files allowed during a single file transfer request.
     ///
     /// Key: `file-transfer-max-files`.
@@ -2999,9 +2991,7 @@ pub mod keys {
     pub const OPTION_ENABLE_UDP_PUNCH: &str = "enable-udp-punch";
     pub const OPTION_ENABLE_IPV6_PUNCH: &str = "enable-ipv6-punch";
     pub const OPTION_ENABLE_PORT_FORWARD_MUX: &str = "enable-port-forward-mux";
-    pub const OPTION_ENABLE_WEBRTC: &str = "enable-webrtc";
     pub const OPTION_ALLOW_KCP_CC: &str = "allow-kcp-congestion-control";
-    pub const OPTION_ALLOW_WEBRTC_CC: &str = "allow-webrtc-congestion-control";
     pub const OPTION_HIDE_USERNAME_ON_CARD: &str = "hide-username-on-card";
     pub const OPTION_HIDE_HELP_CARDS: &str = "hide-help-cards";
     pub const OPTION_DEFAULT_CONNECT_PASSWORD: &str = "default-connect-password";
@@ -3016,7 +3006,6 @@ pub mod keys {
     pub const OPTION_ALLOW_HOSTNAME_AS_ID: &str = "allow-hostname-as-id";
     pub const OPTION_HIDE_POWERED_BY_ME: &str = "hide-powered-by-me";
     pub const OPTION_MAIN_WINDOW_ALWAYS_ON_TOP: &str = "main-window-always-on-top";
-    pub const OPTION_DISABLE_CHANGE_PERMANENT_PASSWORD: &str = "disable-change-permanent-password";
     pub const OPTION_DISABLE_CHANGE_ID: &str = "disable-change-id";
     pub const OPTION_DISABLE_UNLOCK_PIN: &str = "disable-unlock-pin";
 
@@ -3127,7 +3116,6 @@ pub mod keys {
         OPTION_PRE_ELEVATE_SERVICE,
         OPTION_ALLOW_REMOTE_CM_MODIFICATION,
         OPTION_ALLOW_SYNC_CLIPBOARD_BETWEEN_SESSIONS,
-        OPTION_ENABLE_CHECK_UPDATE,
         OPTION_ALLOW_AUTO_RECORD_OUTGOING,
         OPTION_HIDE_RECORDING_BUTTON,
         OPTION_VIDEO_SAVE_DIRECTORY,
@@ -3135,7 +3123,6 @@ pub mod keys {
         OPTION_ENABLE_UDP_PUNCH,
         OPTION_ENABLE_IPV6_PUNCH,
         OPTION_ENABLE_PORT_FORWARD_MUX,
-        OPTION_ENABLE_WEBRTC,
         OPTION_TOUCH_MODE,
         OPTION_SHOW_VIRTUAL_MOUSE,
         OPTION_SHOW_VIRTUAL_JOYSTICK,
@@ -3200,13 +3187,10 @@ pub mod keys {
         OPTION_ENABLE_ANDROID_SOFTWARE_ENCODING_HALF_SCALE,
         OPTION_ENABLE_TRUSTED_DEVICES,
         OPTION_RELAY_SERVER,
-        OPTION_ICE_SERVERS,
         OPTION_DISABLE_UDP,
         OPTION_ALLOW_INSECURE_TLS_FALLBACK,
         OPTION_KEEP_AWAKE_DURING_INCOMING_SESSIONS,
-        OPTION_ALLOW_AUTO_UPDATE,
         OPTION_ALLOW_KCP_CC,
-        OPTION_ALLOW_WEBRTC_CC,
     ];
 
     // BUILDIN_SETTINGS
@@ -3239,7 +3223,6 @@ pub mod keys {
         OPTION_HIDE_POWERED_BY_ME,
         OPTION_MAIN_WINDOW_ALWAYS_ON_TOP,
         OPTION_FILE_TRANSFER_MAX_FILES,
-        OPTION_DISABLE_CHANGE_PERMANENT_PASSWORD,
         OPTION_DISABLE_CHANGE_ID,
         OPTION_DISABLE_UNLOCK_PIN,
         OPTION_USE_RAW_TCP_FOR_API,

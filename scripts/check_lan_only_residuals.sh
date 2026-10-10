@@ -124,6 +124,11 @@ report_matches \
   '[.](set_raw|send_bytes)[[:space:]]*\(' \
   src/port_forward.rs src/server/connection.rs
 
+report_matches \
+  'upstream custom-client signing key or legacy password hashing' \
+  '5Qbwsde3unUcJBtrx9ZkvUmwFNoExHzpryHuPUdqlWM=|compute_permanent_password_h1|apply_permanent_password_storage_for_sync' \
+  src libs/hbb_common/src --glob '*.rs' --glob '!src/lang/**'
+
 for removed in \
   src/rendezvous_mediator.rs \
   src/kcp_stream.rs \
