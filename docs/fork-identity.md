@@ -14,6 +14,7 @@ internal identities to coexist with RustDesk and the original SubnetDesk:
 | Credential and identity keyring services | `io.github.weimutter6688.SubnetDesk.LANCredentials`, `io.github.weimutter6688.SubnetDesk.LANIdentities` |
 | Portable extraction directory | `subnetdesk-weimutter6688-portable` |
 | Portable executable environment variable | `SUBNETDESK_WEIMUTTER6688_APPNAME` |
+| Windows app/privacy window classes | `SUBNETDESK_WEIMUTTER6688_WIN32_WINDOW`, `SubnetDeskWeimutter6688PrivacyWindowClass` |
 | mDNS service | `_sd-w6688._tcp.local.` |
 | Signed handshake domain | `subnetdesk-weimutter6688-lan-handshake-v3\0` |
 
