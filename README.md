@@ -96,7 +96,9 @@ Download stable packages from **[GitHub Releases](https://github.com/weimutter66
 > [!NOTE]
 > Nightly packages are development builds. Prefer the latest stable release for daily use.
 
-Windows distributions may also include a portable `.zip`. Extract the entire folder before running `SubnetDesk.exe`; keep its bundled libraries and data files together.
+Windows desktop releases include a portable `.zip`. Extract the entire folder before running `SubnetDesk.exe`; keep its bundled libraries and data files together.
+
+The [Release Build workflow](https://github.com/weimutter6688/SubnetDesk/actions/workflows/flutter-tag.yml) builds Windows, macOS and Linux for x64 and ARM64 without purchased signing certificates. Select platforms and architectures manually, or push a version tag. Packages are published together after every selected build passes, with `SHA256SUMS` and a build manifest. Android and extra Linux formats are outside the default desktop build. See the [GitHub Release guide](docs/github-releases.md) for versioning, unsigned packages and workflow options.
 
 <a id="quick-start"></a>
 

@@ -96,7 +96,9 @@ SubnetDesk 专注于一个明确场景：让本身已经网络互通的设备直
 > [!NOTE]
 > Nightly 属于开发构建，日常使用建议优先选择最新稳定版本。
 
-Windows 分发包也可能提供便携版 `.zip`。请完整解压后运行 `SubnetDesk.exe`，并保留同目录中的依赖库和数据文件。
+Windows 桌面发行包包含便携版 `.zip`。请完整解压后运行 `SubnetDesk.exe`，并保留同目录中的依赖库和数据文件。
+
+[Release Build 工作流](https://github.com/weimutter6688/SubnetDesk/actions/workflows/flutter-tag.yml) 无需购买签名证书即可构建 Windows、macOS、Linux 的 x64 和 ARM64 包。可以手动选择平台和架构，也可以推送版本标签；所有选中的构建通过后统一发布，并附带 `SHA256SUMS` 和构建清单。Android 和额外的 Linux 格式不属于默认桌面构建。版本号、未签名包及操作步骤见 [GitHub Release 构建说明](docs/github-releases.md)。
 
 <a id="quick-start"></a>
 
