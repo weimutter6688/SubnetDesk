@@ -793,6 +793,12 @@ export interface VideoFrame {
   vp8s?: EncodedVideoFrames | undefined;
   av1s?: EncodedVideoFrames | undefined;
   display: number;
+  /**
+   * Encoded size can change under congestion; desktop geometry stays in
+   * DisplayInfo/SwitchDisplay and must not follow these dimensions.
+   */
+  stream_width: number;
+  stream_height: number;
 }
 
 export interface IdPk {
@@ -1516,6 +1522,8 @@ export interface OptionMessage {
   disable_camera: OptionMessage_BoolOption;
   terminal_persistent: OptionMessage_BoolOption;
   show_my_cursor: OptionMessage_BoolOption;
+  connection_profile: string;
+  adaptive_resolution: OptionMessage_BoolOption;
 }
 
 export enum OptionMessage_BoolOption {
@@ -1562,6 +1570,11 @@ export interface TestDelay {
   from_client: boolean;
   last_delay: number;
   target_bitrate: number;
+  capture_ms: number;
+  encode_ms: number;
+  send_ms: number;
+  stream_width: number;
+  stream_height: number;
 }
 
 export interface PublicKey {
@@ -2315,6 +2328,8 @@ function createBaseVideoFrame(): VideoFrame {
     vp8s: undefined,
     av1s: undefined,
     display: 0,
+    stream_width: 0,
+    stream_height: 0,
   };
 }
 
@@ -2343,6 +2358,12 @@ export const VideoFrame: MessageFns<VideoFrame> = {
     }
     if (message.display !== 0) {
       writer.uint32(112).int32(message.display);
+    }
+    if (message.stream_width !== 0) {
+      writer.uint32(120).uint32(message.stream_width);
+    }
+    if (message.stream_height !== 0) {
+      writer.uint32(128).uint32(message.stream_height);
     }
     return writer;
   },
@@ -2418,6 +2439,22 @@ export const VideoFrame: MessageFns<VideoFrame> = {
           message.display = reader.int32();
           continue;
         }
+        case 15: {
+          if (tag !== 120) {
+            break;
+          }
+
+          message.stream_width = reader.uint32();
+          continue;
+        }
+        case 16: {
+          if (tag !== 128) {
+            break;
+          }
+
+          message.stream_height = reader.uint32();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2437,6 +2474,8 @@ export const VideoFrame: MessageFns<VideoFrame> = {
       vp8s: isSet(object.vp8s) ? EncodedVideoFrames.fromJSON(object.vp8s) : undefined,
       av1s: isSet(object.av1s) ? EncodedVideoFrames.fromJSON(object.av1s) : undefined,
       display: isSet(object.display) ? globalThis.Number(object.display) : 0,
+      stream_width: isSet(object.stream_width) ? globalThis.Number(object.stream_width) : 0,
+      stream_height: isSet(object.stream_height) ? globalThis.Number(object.stream_height) : 0,
     };
   },
 
@@ -2466,6 +2505,12 @@ export const VideoFrame: MessageFns<VideoFrame> = {
     if (message.display !== 0) {
       obj.display = Math.round(message.display);
     }
+    if (message.stream_width !== 0) {
+      obj.stream_width = Math.round(message.stream_width);
+    }
+    if (message.stream_height !== 0) {
+      obj.stream_height = Math.round(message.stream_height);
+    }
     return obj;
   },
 
@@ -2492,6 +2537,8 @@ export const VideoFrame: MessageFns<VideoFrame> = {
       ? EncodedVideoFrames.fromPartial(object.av1s)
       : undefined;
     message.display = object.display ?? 0;
+    message.stream_width = object.stream_width ?? 0;
+    message.stream_height = object.stream_height ?? 0;
     return message;
   },
 };
@@ -10295,6 +10342,8 @@ function createBaseOptionMessage(): OptionMessage {
     disable_camera: 0,
     terminal_persistent: 0,
     show_my_cursor: 0,
+    connection_profile: "",
+    adaptive_resolution: 0,
   };
 }
 
@@ -10350,6 +10399,12 @@ export const OptionMessage: MessageFns<OptionMessage> = {
     }
     if (message.show_my_cursor !== 0) {
       writer.uint32(152).int32(message.show_my_cursor);
+    }
+    if (message.connection_profile !== "") {
+      writer.uint32(162).string(message.connection_profile);
+    }
+    if (message.adaptive_resolution !== 0) {
+      writer.uint32(168).int32(message.adaptive_resolution);
     }
     return writer;
   },
@@ -10497,6 +10552,22 @@ export const OptionMessage: MessageFns<OptionMessage> = {
           message.show_my_cursor = reader.int32() as any;
           continue;
         }
+        case 20: {
+          if (tag !== 162) {
+            break;
+          }
+
+          message.connection_profile = reader.string();
+          continue;
+        }
+        case 21: {
+          if (tag !== 168) {
+            break;
+          }
+
+          message.adaptive_resolution = reader.int32() as any;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -10541,6 +10612,10 @@ export const OptionMessage: MessageFns<OptionMessage> = {
         ? optionMessage_BoolOptionFromJSON(object.terminal_persistent)
         : 0,
       show_my_cursor: isSet(object.show_my_cursor) ? optionMessage_BoolOptionFromJSON(object.show_my_cursor) : 0,
+      connection_profile: isSet(object.connection_profile) ? globalThis.String(object.connection_profile) : "",
+      adaptive_resolution: isSet(object.adaptive_resolution)
+        ? optionMessage_BoolOptionFromJSON(object.adaptive_resolution)
+        : 0,
     };
   },
 
@@ -10597,6 +10672,12 @@ export const OptionMessage: MessageFns<OptionMessage> = {
     if (message.show_my_cursor !== 0) {
       obj.show_my_cursor = optionMessage_BoolOptionToJSON(message.show_my_cursor);
     }
+    if (message.connection_profile !== "") {
+      obj.connection_profile = message.connection_profile;
+    }
+    if (message.adaptive_resolution !== 0) {
+      obj.adaptive_resolution = optionMessage_BoolOptionToJSON(message.adaptive_resolution);
+    }
     return obj;
   },
 
@@ -10624,12 +10705,24 @@ export const OptionMessage: MessageFns<OptionMessage> = {
     message.disable_camera = object.disable_camera ?? 0;
     message.terminal_persistent = object.terminal_persistent ?? 0;
     message.show_my_cursor = object.show_my_cursor ?? 0;
+    message.connection_profile = object.connection_profile ?? "";
+    message.adaptive_resolution = object.adaptive_resolution ?? 0;
     return message;
   },
 };
 
 function createBaseTestDelay(): TestDelay {
-  return { time: 0n, from_client: false, last_delay: 0, target_bitrate: 0 };
+  return {
+    time: 0n,
+    from_client: false,
+    last_delay: 0,
+    target_bitrate: 0,
+    capture_ms: 0,
+    encode_ms: 0,
+    send_ms: 0,
+    stream_width: 0,
+    stream_height: 0,
+  };
 }
 
 export const TestDelay: MessageFns<TestDelay> = {
@@ -10648,6 +10741,21 @@ export const TestDelay: MessageFns<TestDelay> = {
     }
     if (message.target_bitrate !== 0) {
       writer.uint32(32).uint32(message.target_bitrate);
+    }
+    if (message.capture_ms !== 0) {
+      writer.uint32(40).uint32(message.capture_ms);
+    }
+    if (message.encode_ms !== 0) {
+      writer.uint32(48).uint32(message.encode_ms);
+    }
+    if (message.send_ms !== 0) {
+      writer.uint32(56).uint32(message.send_ms);
+    }
+    if (message.stream_width !== 0) {
+      writer.uint32(64).uint32(message.stream_width);
+    }
+    if (message.stream_height !== 0) {
+      writer.uint32(72).uint32(message.stream_height);
     }
     return writer;
   },
@@ -10691,6 +10799,46 @@ export const TestDelay: MessageFns<TestDelay> = {
           message.target_bitrate = reader.uint32();
           continue;
         }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.capture_ms = reader.uint32();
+          continue;
+        }
+        case 6: {
+          if (tag !== 48) {
+            break;
+          }
+
+          message.encode_ms = reader.uint32();
+          continue;
+        }
+        case 7: {
+          if (tag !== 56) {
+            break;
+          }
+
+          message.send_ms = reader.uint32();
+          continue;
+        }
+        case 8: {
+          if (tag !== 64) {
+            break;
+          }
+
+          message.stream_width = reader.uint32();
+          continue;
+        }
+        case 9: {
+          if (tag !== 72) {
+            break;
+          }
+
+          message.stream_height = reader.uint32();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -10706,6 +10854,11 @@ export const TestDelay: MessageFns<TestDelay> = {
       from_client: isSet(object.from_client) ? globalThis.Boolean(object.from_client) : false,
       last_delay: isSet(object.last_delay) ? globalThis.Number(object.last_delay) : 0,
       target_bitrate: isSet(object.target_bitrate) ? globalThis.Number(object.target_bitrate) : 0,
+      capture_ms: isSet(object.capture_ms) ? globalThis.Number(object.capture_ms) : 0,
+      encode_ms: isSet(object.encode_ms) ? globalThis.Number(object.encode_ms) : 0,
+      send_ms: isSet(object.send_ms) ? globalThis.Number(object.send_ms) : 0,
+      stream_width: isSet(object.stream_width) ? globalThis.Number(object.stream_width) : 0,
+      stream_height: isSet(object.stream_height) ? globalThis.Number(object.stream_height) : 0,
     };
   },
 
@@ -10723,6 +10876,21 @@ export const TestDelay: MessageFns<TestDelay> = {
     if (message.target_bitrate !== 0) {
       obj.target_bitrate = Math.round(message.target_bitrate);
     }
+    if (message.capture_ms !== 0) {
+      obj.capture_ms = Math.round(message.capture_ms);
+    }
+    if (message.encode_ms !== 0) {
+      obj.encode_ms = Math.round(message.encode_ms);
+    }
+    if (message.send_ms !== 0) {
+      obj.send_ms = Math.round(message.send_ms);
+    }
+    if (message.stream_width !== 0) {
+      obj.stream_width = Math.round(message.stream_width);
+    }
+    if (message.stream_height !== 0) {
+      obj.stream_height = Math.round(message.stream_height);
+    }
     return obj;
   },
 
@@ -10735,6 +10903,11 @@ export const TestDelay: MessageFns<TestDelay> = {
     message.from_client = object.from_client ?? false;
     message.last_delay = object.last_delay ?? 0;
     message.target_bitrate = object.target_bitrate ?? 0;
+    message.capture_ms = object.capture_ms ?? 0;
+    message.encode_ms = object.encode_ms ?? 0;
+    message.send_ms = object.send_ms ?? 0;
+    message.stream_width = object.stream_width ?? 0;
+    message.stream_height = object.stream_height ?? 0;
     return message;
   },
 };
