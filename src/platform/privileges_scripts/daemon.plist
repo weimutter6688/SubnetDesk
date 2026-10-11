@@ -16,7 +16,7 @@
         <array>
         <string>/bin/sh</string>
         <string>-c</string>
-        <string>/Applications/RustDesk.app/Contents/MacOS/service</string>
+        <string>/Applications/RustDesk.app/Contents/MacOS/subnetdesk-service</string>
         </array>
         <key>RunAtLoad</key>
         <true/>

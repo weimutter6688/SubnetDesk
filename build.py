@@ -922,12 +922,12 @@ def build_flutter_dmg(version, features):
     mac_arch = 'arm64' if platform.machine().lower() in ('arm64', 'aarch64') else 'x86_64'
     system2(
         f'FLUTTER_XCODE_ARCHS={mac_arch} FLUTTER_XCODE_ONLY_ACTIVE_ARCH=YES flutter build macos --release')
-    system2('cp -rf ../target/release/service ./build/macos/Build/Products/Release/SubnetDesk.app/Contents/MacOS/')
+    system2('cp -rf ../target/release/subnetdesk-service ./build/macos/Build/Products/Release/SubnetDesk.app/Contents/MacOS/')
     # Flutter signs the app before the service binary is copied. Sign the new nested
     # executable, refresh the outer ad-hoc signature, and fail before packaging if
     # the resulting bundle seal is invalid. Release CI may replace this signature.
     app_path = './build/macos/Build/Products/Release/SubnetDesk.app'
-    service_path = f'{app_path}/Contents/MacOS/service'
+    service_path = f'{app_path}/Contents/MacOS/subnetdesk-service'
     system2(f'codesign --force --sign - --options runtime "{service_path}"')
     system2(
         f'codesign --force --sign - --options runtime '
