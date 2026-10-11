@@ -29,25 +29,15 @@ fi
 
 gh_args=(release upload "$release_tag" "$asset_path" --clobber)
 release_view_args=(release view "$release_tag")
-release_create_args=(release create "$release_tag" --prerelease --title "$release_tag")
 if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
   gh_args+=(--repo "$GITHUB_REPOSITORY")
   release_view_args+=(--repo "$GITHUB_REPOSITORY")
-  release_create_args+=(--repo "$GITHUB_REPOSITORY")
-fi
-if [[ -n "${GITHUB_SHA:-}" ]]; then
-  release_create_args+=(--target "$GITHUB_SHA")
 fi
 
 for ((attempt = 1; attempt <= max_attempts; attempt++)); do
   echo "Uploading $(basename "$asset_path") to $release_tag (attempt $attempt/$max_attempts)"
   release_ready=false
   if gh "${release_view_args[@]}" >/dev/null 2>&1; then
-    release_ready=true
-  elif gh "${release_create_args[@]}"; then
-    release_ready=true
-  elif gh "${release_view_args[@]}" >/dev/null 2>&1; then
-    # Another matrix job may have created the release concurrently.
     release_ready=true
   fi
 

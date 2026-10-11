@@ -11,7 +11,22 @@ on:
         default: false
       build-mobile:
         type: boolean
-        default: true
+        default: false
+      platform:
+        type: string
+        default: all
+      architecture:
+        type: string
+        default: all
+      linux-extras:
+        type: boolean
+        default: false
+      build-drm:
+        type: boolean
+        default: false
+      sign-macos:
+        type: boolean
+        default: false
       upload-tag:
         type: string
         default: "nightly"
@@ -41,7 +56,6 @@ env:
   # 2. Update the `VCPKG_COMMIT_ID` in `ci.yml` and `playground.yml`.
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   ARMV7_VCPKG_COMMIT_ID: "6f29f12e82a8293156836ad81cc9bf5af41fe836" # 2025.01.13, got "/opt/artifacts/vcpkg/vcpkg: No such file or directory" with latest version
-  VERSION: "1.3.0"
   NDK_VERSION: "r28c"
   #signing keys env variable checks
   ANDROID_SIGNING_KEY: "${{ secrets.ANDROID_SIGNING_KEY }}"
@@ -49,61 +63,68 @@ env:
   MACOS_P12_BASE64: "${{ secrets.MACOS_P12_BASE64 }}"
   UPLOAD_ARTIFACT: "${{ inputs.upload-artifact }}"
   PUBLISH_RELEASE: "${{ inputs.publish-release }}"
-  SIGN_BASE_URL: "${{ secrets.SIGN_BASE_URL }}-2"
 
 jobs:
+  prepare:
+    name: Validate release version and selected targets
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      base-version: ${{ steps.metadata.outputs.base-version }}
+      build-number: ${{ steps.metadata.outputs.build-number }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      windows-matrix: ${{ steps.metadata.outputs.windows-matrix }}
+      privacy-matrix: ${{ steps.metadata.outputs.privacy-matrix }}
+      macos-matrix: ${{ steps.metadata.outputs.macos-matrix }}
+      linux-matrix: ${{ steps.metadata.outputs.linux-matrix }}
+      appimage-matrix: ${{ steps.metadata.outputs.appimage-matrix }}
+      flatpak-matrix: ${{ steps.metadata.outputs.flatpak-matrix }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check release metadata and publication guards
+        run: |
+          python3 scripts/test_release.py
+          bash scripts/test_publish_release.sh
+      - name: Validate and export build metadata
+        id: metadata
+        env:
+          SELECTED_PLATFORM: ${{ inputs.platform }}
+          SELECTED_ARCHITECTURE: ${{ inputs.architecture }}
+          RELEASE_TAG: ${{ inputs.upload-tag }}
+        run: |
+          python3 scripts/release_metadata.py --platform "$SELECTED_PLATFORM" --architecture "$SELECTED_ARCHITECTURE" --tag "$RELEASE_TAG" --output "$GITHUB_OUTPUT"
+
   generate-bridge:
+    needs: prepare
     uses: ./.github/workflows/bridge.yml
 
   build-RustDeskTempTopMostWindow:
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'windows' }}
+    needs: prepare
     uses: ./.github/workflows/third-party-RustDeskTempTopMostWindow.yml
     strategy:
       fail-fast: false
-      matrix:
-        job:
-          - {
-              target: windows-2022,
-              platform: x64,
-            }
-          - {
-              target: windows-11-arm,
-              platform: ARM64,
-            }
+      matrix: ${{ fromJSON(needs.prepare.outputs.privacy-matrix) }}
     with:
-      upload-artifact: ${{ inputs.upload-artifact }}
+      upload-artifact: true
       target: ${{ matrix.job.target }}
       configuration: Release
       platform: ${{ matrix.job.platform }}
       target_version: Windows10
 
   build-for-windows-flutter:
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'windows' }}
     name: ${{ matrix.job.target }}
-    needs: [build-RustDeskTempTopMostWindow, generate-bridge]
+    needs: [prepare, build-RustDeskTempTopMostWindow, generate-bridge]
     runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
-      matrix:
-        job:
-          # - { target: i686-pc-windows-msvc        , os: windows-2022                  }
-          # - { target: x86_64-pc-windows-gnu       , os: windows-2022                  }
-          - {
-              target: x86_64-pc-windows-msvc,
-              os: windows-2022,
-              arch: x86_64,
-              flutter-arch: x64,
-              vcpkg-triplet: x64-windows-static,
-              build-args: "--vram",
-            }
-          - {
-              target: aarch64-pc-windows-msvc,
-              os: windows-11-arm,
-              arch: aarch64,
-              flutter-arch: arm64,
-              vcpkg-triplet: arm64-windows-static,
-              # vram is x86/x64-only (NVENC needs CUDA, Intel MediaSDK needs __rdtsc);
-              # no NV/Intel/AMD hardware exists on Windows-on-ARM, so vram stays disabled here.
-              build-args: "",
-            }
+      matrix: ${{ fromJSON(needs.prepare.outputs.windows-matrix) }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE_VERSION: ${{ needs.prepare.outputs.base-version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      SUBNETDESK_PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
@@ -218,17 +239,18 @@ jobs:
         run: |
           # Windows: build RustDesk
           # --hwcodec is shared by all Windows targets; per-target extras (e.g. --vram) come from the matrix
-          python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec ${{ matrix.job.build-args }}
-          mv ./flutter/build/windows/${{ matrix.job.flutter-arch }}/runner/Release ./rustdesk
-          if (!(Test-Path ./rustdesk/SubnetDesk.exe)) { throw "Missing fork executable" }
+          python3 scripts/build_with_diagnostics.py python3 -u .\build.py --portable --flutter --skip-portable-pack --hwcodec ${{ matrix.job.build-args }}
+          if ($LASTEXITCODE -ne 0) { throw "Windows application build failed" }
+          mv ./flutter/build/windows/${{ matrix.job.flutter-arch }}/runner/Release ./SubnetDesk
+          if (!(Test-Path ./SubnetDesk/SubnetDesk.exe)) { throw "Missing fork executable" }
 
-          # Download usbmmidd_v2.zip and extract it to ./rustdesk
+          # Download usbmmidd_v2.zip and extract it to ./SubnetDesk
           python scripts/download_verified.py usbmmidd-v2 --output usbmmidd_v2.zip
           if ($LASTEXITCODE -ne 0) { throw "Driver checksum verification failed" }
           Expand-Archive usbmmidd_v2.zip -DestinationPath .
           Remove-Item -Path usbmmidd_v2\Win32 -Recurse
           Remove-Item -Path "usbmmidd_v2\deviceinstaller64.exe", "usbmmidd_v2\deviceinstaller.exe", "usbmmidd_v2\usbmmidd.bat"
-          mv -Force .\usbmmidd_v2 ./rustdesk
+          mv -Force .\usbmmidd_v2 ./SubnetDesk
 
       - name: find Runner.res
         # Windows: find Runner.res (compiled from ./flutter/windows/runner/Runner.rc), copy to ./Runner.res
@@ -248,24 +270,9 @@ jobs:
 
       - name: Download RustDeskTempTopMostWindow artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        if: ${{ inputs.upload-artifact }}
         with:
           name: ${{ matrix.job.arch == 'aarch64' && 'topmostwindow-artifacts-ARM64' || 'topmostwindow-artifacts-x64' }}
-          path: "./rustdesk"
-
-      - name: Upload unsigned
-        if: env.UPLOAD_ARTIFACT == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: subnetdesk-unsigned-windows-${{ matrix.job.arch }}
-          path: rustdesk
-
-      - name: Sign SubnetDesk files
-        if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '-2'
-        shell: bash
-        run: |
-          pip3 install requests argparse
-          BASE_URL=${{ env.SIGN_BASE_URL }} SECRET_KEY=${{ secrets.SIGN_SECRET_KEY }} python3 res/job.py sign_files ./rustdesk/
+          path: "./SubnetDesk"
 
       - name: Build self-extracted executable
         shell: bash
@@ -274,10 +281,10 @@ jobs:
           sed -i '/dpiAware/d' res/manifest.xml
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/SubnetDesk.exe
+          python3 ./generate.py -f ../../SubnetDesk/ -o . -e ../../SubnetDesk/SubnetDesk.exe
           popd
           mkdir -p ./SignOutput
-          mv ./target/release/subnetdesk-portable-packer.exe ./SignOutput/subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
+          mv ./target/release/subnetdesk-portable-packer.exe ./SignOutput/subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-portable.exe
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
@@ -289,40 +296,31 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
           pushd ./res/msi
-          python preprocess.py --arp --app-name SubnetDesk --display-name SubnetDesk --manufacturer SubnetDesk -d ../../rustdesk
+          python preprocess.py --arp --app-name SubnetDesk --display-name SubnetDesk --manufacturer SubnetDesk --version ${{ env.BASE_VERSION }} --revision-version ${{ env.BUILD_NUMBER }} -d ../../SubnetDesk
           if ($LASTEXITCODE -ne 0) { throw "MSI preprocessing failed with exit code $LASTEXITCODE" }
           nuget restore msi.sln
+          if ($LASTEXITCODE -ne 0) { throw "NuGet restore failed" }
           $msiPlatform = if ('${{ matrix.job.arch }}' -eq 'aarch64') { 'ARM64' } else { 'x64' }
           msbuild msi.sln -p:Configuration=Release -p:Platform=$msiPlatform /p:TargetVersion=Windows10
+          if ($LASTEXITCODE -ne 0) { throw "MSI build failed" }
           $msi = Get-ChildItem ./Package/bin/*/Release/en-us/Package.msi | Select-Object -First 1
           mv $msi.FullName ../../SignOutput/subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
           sha256sum ../../SignOutput/subnetdesk-*.msi
 
-      - name: Sign SubnetDesk self-extracted file
-        if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '-2'
-        shell: bash
-        run: |
-          BASE_URL=${{ env.SIGN_BASE_URL }} SECRET_KEY=${{ secrets.SIGN_SECRET_KEY }} python3 res/job.py sign_files ./SignOutput
+      - name: Create portable ZIP
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: Compress-Archive -Path ./SubnetDesk -DestinationPath ./SignOutput/subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}-portable.zip
 
       - name: Upload Windows installers
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: subnetdesk-windows-${{ matrix.job.arch }}
+          if-no-files-found: error
           path: |
             ./SignOutput/subnetdesk-*.msi
             ./SignOutput/subnetdesk-*.exe
-
-      - name: Publish Release
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        if: env.PUBLISH_RELEASE == 'true'
-        with:
-          prerelease: ${{ inputs.upload-tag == 'nightly' || contains(inputs.upload-tag, '-') }}
-          generate_release_notes: true
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            ./SignOutput/subnetdesk-*.msi
-            ./SignOutput/subnetdesk-*.exe
+            ./SignOutput/subnetdesk-*.zip
 
   # The fallback for the flutter version, we use Sciter for 32bit Windows.
   build-for-windows-sciter:
@@ -335,7 +333,7 @@ jobs:
     if: ${{ inputs.upload-artifact && inputs.build-mobile }}
     name: Build SubnetDesk ios ipa
     runs-on: ${{ matrix.job.os }}
-    needs: [generate-bridge]
+    needs: [prepare, generate-bridge]
     strategy:
       fail-fast: false
       matrix:
@@ -346,6 +344,11 @@ jobs:
               os: macos-latest,
               vcpkg-triplet: arm64-ios,
             }
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE_VERSION: ${{ needs.prepare.outputs.base-version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      SUBNETDESK_PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
@@ -445,28 +448,18 @@ jobs:
 
 
   build-for-macOS:
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'macos' }}
     name: ${{ matrix.job.target }}
     runs-on: ${{ matrix.job.os }}
-    needs: [generate-bridge]
+    needs: [prepare, generate-bridge]
     strategy:
       fail-fast: false
-      matrix:
-        job:
-          - {
-              target: x86_64-apple-darwin,
-              os: macos-15-intel, #macos-latest or macos-14 use M1 now, https://docs.github.com/en/actions/using-github-hosted-runners/about-github-hosted-runners/about-github-hosted-runners#:~:text=14%20GB-,macos%2Dlatest%20or%20macos%2D14,-The%20macos%2Dlatestlabel
-              extra-build-args: "",
-              arch: x86_64,
-              vcpkg-triplet: x64-osx,
-            }
-          - {
-              target: aarch64-apple-darwin,
-              os: macos-14,
-              # extra-build-args: "--disable-flutter-texture-render", # disable this for mac, because we see a lot of users reporting flickering both on arm and x64, and we can not confirm if texture rendering has better performance if htere is no vram, https://github.com/rustdesk/rustdesk/issues/6296
-              extra-build-args: "--screencapturekit",
-              arch: aarch64,
-              vcpkg-triplet: arm64-osx,
-            }
+      matrix: ${{ fromJSON(needs.prepare.outputs.macos-matrix) }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE_VERSION: ${{ needs.prepare.outputs.base-version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      SUBNETDESK_PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
@@ -479,7 +472,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Import the codesign cert
-        if: env.MACOS_P12_BASE64 != ''
+        if: inputs.sign-macos && env.MACOS_P12_BASE64 != ''
         uses: apple-actions/import-codesign-certs@253ddeeac23f2bdad1646faac5c8c2832e800071 # v1
         with:
           p12-file-base64: ${{ secrets.MACOS_P12_BASE64 }}
@@ -487,13 +480,13 @@ jobs:
           keychain: rustdesk
 
       - name: Check sign and import sign key
-        if: env.MACOS_P12_BASE64 != ''
+        if: inputs.sign-macos && env.MACOS_P12_BASE64 != ''
         run: |
           security default-keychain -s rustdesk.keychain
           security find-identity -v
 
       - name: Import notarize key
-        if: env.MACOS_P12_BASE64 != ''
+        if: inputs.sign-macos && env.MACOS_P12_BASE64 != ''
         uses: timheuer/base64-to-file@adaa40c0c581f276132199d4cf60afa07ce60eac # v1.2
         with:
           # https://gregoryszorc.com/docs/apple-codesign/stable/apple_codesign_rcodesign.html#notarizing-and-stapling
@@ -502,7 +495,7 @@ jobs:
           encodedString: ${{ secrets.MACOS_NOTARIZE_JSON }}
 
       - name: Install rcodesign tool
-        if: env.MACOS_P12_BASE64 != ''
+        if: inputs.sign-macos && env.MACOS_P12_BASE64 != ''
         shell: bash
         run: |
           pushd /tmp
@@ -604,7 +597,7 @@ jobs:
             sed -i -e "s/osx_minimum_system_version = \"[0-9]*.[0-9]*\"/osx_minimum_system_version = \"${MIN_MACOS_VERSION}\"/" Cargo.toml
             sed -i -e "s/MACOSX_DEPLOYMENT_TARGET = [0-9]*.[0-9]*;/MACOSX_DEPLOYMENT_TARGET = ${MIN_MACOS_VERSION};/" flutter/macos/Runner.xcodeproj/project.pbxproj
           fi
-          ./build.py --flutter --hwcodec --unix-file-copy-paste ${{ matrix.job.extra-build-args }}
+          python3 scripts/build_with_diagnostics.py python3 -u build.py --flutter --hwcodec --unix-file-copy-paste ${{ matrix.job.extra-build-args }}
 
       - name: create unsigned dmg
         if: env.UPLOAD_ARTIFACT == 'true'
@@ -614,15 +607,8 @@ jobs:
           sed -i -e 's/MAXIMUM_UNMOUNTING_ATTEMPTS=3/MAXIMUM_UNMOUNTING_ATTEMPTS=7/' "$CREATE_DMG"
           create-dmg --icon "SubnetDesk.app" 200 190 --hide-extension "SubnetDesk.app" --window-size 800 400 --app-drop-link 600 185 subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg ./flutter/build/macos/Build/Products/Release/SubnetDesk.app
 
-      - name: Upload unsigned macOS app
-        if: env.UPLOAD_ARTIFACT == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: subnetdesk-unsigned-macos-${{ matrix.job.arch }}
-          path: subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg # can not upload the directory directly or tar.gz, which destroy the link structure, causing the codesign failed
-
       - name: Codesign app and create signed dmg
-        if: env.MACOS_P12_BASE64 != '' && env.UPLOAD_ARTIFACT == 'true'
+        if: inputs.sign-macos && env.MACOS_P12_BASE64 != '' && env.UPLOAD_ARTIFACT == 'true'
         run: |
           # Patch create-dmg to give more attempts to unmount image
           CREATE_DMG="$(command -v create-dmg)"
@@ -644,60 +630,12 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: subnetdesk-macos-${{ matrix.job.arch }}
+          if-no-files-found: error
           path: subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg
-
-      - name: Publish DMG package
-        if: env.PUBLISH_RELEASE == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/upload_release_asset_with_retry.sh "$TAG_NAME" "subnetdesk-${VERSION}-${{ matrix.job.arch }}.dmg"
-
-  publish_unsigned:
-    needs:
-      - build-for-macOS
-      - build-for-windows-flutter
-    runs-on: ubuntu-latest
-    if: ${{ inputs.publish-release }}
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: subnetdesk-unsigned-macos-x86_64
-          path: ./
-
-      - name: Download Artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: subnetdesk-unsigned-macos-aarch64
-          path: ./
-
-      - name: Download Artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: subnetdesk-unsigned-windows-x86_64
-          path: ./windows-x86_64/
-
-      - name: Download Artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: subnetdesk-unsigned-windows-aarch64
-          path: ./windows-aarch64/
-
-      - name: Combine unsigned app
-        run: |
-          tar czf subnetdesk-${{ env.VERSION }}-unsigned.tar.gz *.dmg windows-x86_64 windows-aarch64
-
-      - name: Publish unsigned app
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        with:
-          prerelease: ${{ inputs.upload-tag == 'nightly' || contains(inputs.upload-tag, '-') }}
-          generate_release_notes: true
-          tag_name: ${{ env.TAG_NAME }}
-          files: subnetdesk-${{ env.VERSION }}-unsigned.tar.gz
 
   build-rustdesk-android:
     if: ${{ inputs.build-mobile }}
-    needs: [generate-bridge]
+    needs: [prepare, generate-bridge]
     name: Build SubnetDesk android apk ${{ matrix.job.target }}
     runs-on: ${{ matrix.job.os }}
     strategy:
@@ -725,6 +663,11 @@ jobs:
               reltype: release,
               suffix: "",
             }
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE_VERSION: ${{ needs.prepare.outputs.base-version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      SUBNETDESK_PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
@@ -1004,24 +947,19 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.apk
+          if-no-files-found: error
           path: ${{steps.sign-rustdesk.outputs.signedReleaseFile}}
 
-      - name: Publish signed apk package
-        if: env.ANDROID_SIGNING_KEY != '' && env.PUBLISH_RELEASE == 'true'
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        with:
-          prerelease: ${{ inputs.upload-tag == 'nightly' || contains(inputs.upload-tag, '-') }}
-          generate_release_notes: true
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            ${{steps.sign-rustdesk.outputs.signedReleaseFile}}
-
   build-rustdesk-android-universal:
-    needs: [build-rustdesk-android]
+    needs: [prepare, build-rustdesk-android]
     name: Build SubnetDesk android universal apk
     if: ${{ inputs.upload-artifact && inputs.build-mobile }}
     runs-on: ubuntu-24.04
     env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE_VERSION: ${{ needs.prepare.outputs.base-version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      SUBNETDESK_PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
       reltype: release
       x86_target: "" # can be ",android-x86"
       suffix: ""
@@ -1216,43 +1154,22 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: subnetdesk-${{ env.VERSION }}-universal${{ env.suffix }}.apk
+          if-no-files-found: error
           path: ${{steps.sign-rustdesk.outputs.signedReleaseFile}}
 
-      - name: Publish signed apk package
-        if: env.ANDROID_SIGNING_KEY != '' && env.PUBLISH_RELEASE == 'true'
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        with:
-          prerelease: ${{ inputs.upload-tag == 'nightly' || contains(inputs.upload-tag, '-') }}
-          generate_release_notes: true
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            ${{steps.sign-rustdesk.outputs.signedReleaseFile}}
-
   build-rustdesk-linux:
-    needs: [generate-bridge]
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'linux' }}
+    needs: [prepare, generate-bridge]
     name: Build SubnetDesk linux ${{ matrix.job.target }}
     runs-on: ${{ matrix.job.on }}
     strategy:
       fail-fast: false
-      matrix:
-        # use a high level qemu-user-static
-        job:
-          - {
-              arch: x86_64,
-              target: x86_64-unknown-linux-gnu,
-              distro: ubuntu18.04,
-              on: ubuntu-22.04,
-              deb_arch: amd64,
-              vcpkg-triplet: x64-linux,
-            }
-          - {
-              arch: aarch64,
-              target: aarch64-unknown-linux-gnu,
-              distro: ubuntu18.04,
-              on: ubuntu-22.04-arm,
-              deb_arch: arm64,
-              vcpkg-triplet: arm64-linux,
-            }
+      matrix: ${{ fromJSON(needs.prepare.outputs.linux-matrix) }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE_VERSION: ${{ needs.prepare.outputs.base-version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      SUBNETDESK_PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
@@ -1374,7 +1291,7 @@ jobs:
                g++ \
                libayatana-appindicator3-dev \
                libasound2-dev \
-               libclang-10-dev \
+               libclang-dev \
                libgstreamer1.0-dev \
                libgstreamer-plugins-base1.0-dev \
                libgtk-3-dev \
@@ -1386,7 +1303,7 @@ jobs:
                libxcb-xfixes0-dev \
                libxdo-dev \
                libxfixes-dev \
-               llvm-10-dev \
+               llvm-dev \
                nasm \
                ninja-build \
                pkg-config \
@@ -1428,7 +1345,7 @@ jobs:
               export JOBS=""
             fi
             echo $JOBS
-            cargo build --locked --lib $JOBS --features hwcodec,flutter,unix-file-copy-paste --release
+            python3 /workspace/scripts/build_with_diagnostics.py cargo build --locked --lib $JOBS --features hwcodec,flutter,unix-file-copy-paste --release
             rm -rf target/release/deps target/release/build
             rm -rf ~/.cargo
 
@@ -1462,8 +1379,9 @@ jobs:
             # build flutter
             pushd /workspace
             export CARGO_INCREMENTAL=0
+            export SUBNETDESK_PACKAGE_VERSION=${{ env.VERSION }}
             export DEB_ARCH=${{ matrix.job.deb_arch }}
-            python3 ./build.py --flutter --skip-cargo
+            python3 scripts/build_with_diagnostics.py python3 -u ./build.py --flutter --skip-cargo
             for name in subnetdesk*??.deb; do
               mv "$name" "${name%%.deb}-${{ matrix.job.arch }}.deb"
             done
@@ -1476,6 +1394,7 @@ jobs:
                 sed -i "s/linux\/x64/linux\/arm64/g" ./res/rpm-flutter.spec
                 ;;
             esac
+            sed -i "s/^Version:.*/Version:    ${{ env.VERSION }}/" res/rpm-flutter.spec res/rpm-flutter-suse.spec
             HBB=`pwd` rpmbuild ./res/rpm-flutter.spec -bb
             pushd ~/rpmbuild/RPMS/${{ matrix.job.arch }}
             for name in subnetdesk-*.rpm; do
@@ -1497,22 +1416,12 @@ jobs:
                 mv "$name" "/workspace/subnetdesk-${base%%.rpm}-suse.rpm"
             done
 
-      - name: Publish debian/rpm package
-        if: env.PUBLISH_RELEASE == 'true'
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        with:
-          prerelease: ${{ inputs.upload-tag == 'nightly' || contains(inputs.upload-tag, '-') }}
-          generate_release_notes: true
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            subnetdesk-*.deb
-            subnetdesk-*.rpm
-
       - name: Upload deb
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
           name: subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
+          if-no-files-found: error
           path: subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.deb
 
       - name: Upload rpm packages
@@ -1520,21 +1429,23 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
           name: subnetdesk-linux-rpm-${{ matrix.job.arch }}
+          if-no-files-found: error
           path: subnetdesk-*.rpm
 
       # only x86_64 for arch since we can not find newest arm64 docker image to build
       # old arch image does not make sense for arch since it is "arch" which always update to date
       # and failed to makepkg arm64 on x86_64
       - name: Patch archlinux PKGBUILD
-        if: matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
+        if: inputs.linux-extras && matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
         run: |
+          sed -i "s/^pkgver=.*/pkgver=${{ env.VERSION }}/" res/PKGBUILD
           sed -i "s/x86_64/${{ matrix.job.arch }}/g" res/PKGBUILD
           if [[ "${{ matrix.job.arch }}" == "aarch64" ]]; then
             sed -i "s/x86_64/aarch64/g" ./res/PKGBUILD
           fi
 
       - name: Build archlinux package
-        if: matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
+        if: inputs.linux-extras && matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
         uses: rustdesk-org/arch-makepkg-action@04200739ed1d0bf6f2188b6736b26a767c57a7f9 # no release tag; commit 2026-05-26
         with:
           packages:
@@ -1543,21 +1454,12 @@ jobs:
             HBB="$(pwd)/.." FLUTTER=1 makepkg -f
 
       - name: Upload Arch Linux package
-        if: matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
+        if: inputs.linux-extras && matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: subnetdesk-archlinux-x86_64
+          if-no-files-found: error
           path: res/subnetdesk-${{ env.VERSION }}*.zst
-
-      - name: Publish archlinux package
-        if: matrix.job.arch == 'x86_64' && env.PUBLISH_RELEASE == 'true'
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        with:
-          prerelease: ${{ inputs.upload-tag == 'nightly' || contains(inputs.upload-tag, '-') }}
-          generate_release_notes: true
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            res/subnetdesk-${{ env.VERSION }}*.zst
 
   # Same build as build-rustdesk-linux x86_64 -- same vcpkg/ffmpeg, same ubuntu18.04 container, same
   # rust and flutter -- only with the drm feature on, so it ships as the separate
@@ -1565,9 +1467,15 @@ jobs:
   # old for it. A separate job rather than a matrix entry of build-rustdesk-linux: appimage and
   # flatpak need that job, and a failure here must not skip them.
   build-rustdesk-linux-drm:
-    needs: [generate-bridge]
+    if: ${{ inputs.build-drm && (inputs.platform == 'all' || inputs.platform == 'linux') && inputs.architecture != 'aarch64' }}
+    needs: [prepare, generate-bridge]
     name: build subnetdesk linux drm x86_64
     runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE_VERSION: ${{ needs.prepare.outputs.base-version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      SUBNETDESK_PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
@@ -1805,18 +1713,6 @@ jobs:
           fi
         shell: bash
 
-      - name: Publish debian package
-        if: env.PUBLISH_RELEASE == 'true'
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        with:
-          prerelease: ${{ inputs.upload-tag == 'nightly' || contains(inputs.upload-tag, '-') }}
-          generate_release_notes: true
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            ${{ env.DRM_DEB }}
-
-      # No UPLOAD_ARTIFACT gate: on a PR this is the only way to get at the deb that was just built.
-      # always(), because a deb that failed the check above is the one most worth downloading.
       - name: Upload deb
         if: always() && env.DRM_DEB != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1831,16 +1727,18 @@ jobs:
       - run: echo "Legacy Sciter builds are unavailable in this LAN-only fork."
 
   build-appimage:
+    if: ${{ inputs.upload-artifact && inputs.linux-extras && (inputs.platform == 'all' || inputs.platform == 'linux') }}
     name: Build appimage ${{ matrix.job.target }}
-    needs: [build-rustdesk-linux]
+    needs: [prepare, build-rustdesk-linux]
     runs-on: ubuntu-22.04
-    if: ${{ inputs.upload-artifact }}
     strategy:
       fail-fast: false
-      matrix:
-        job:
-          - { target: x86_64-unknown-linux-gnu, arch: x86_64 }
-          - { target: aarch64-unknown-linux-gnu, arch: aarch64 }
+      matrix: ${{ fromJSON(needs.prepare.outputs.appimage-matrix) }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE_VERSION: ${{ needs.prepare.outputs.base-version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      SUBNETDESK_PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Checkout source code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -1866,54 +1764,35 @@ jobs:
           # https://github.com/AppImage/AppImageKit/issues/1395
           sudo pip3 install "setuptools_scm<10"
           sudo pip3 install git+https://github.com/rustdesk-org/appimage-builder.git
+          sed -i "s/    version:.*/    version: ${{ env.VERSION }}/" appimage/AppImageBuilder-${{ matrix.job.arch }}.yml
           # run appimage-builder
           pushd appimage
           sudo appimage-builder --skip-tests --recipe ./AppImageBuilder-${{ matrix.job.arch }}.yml
           sudo chown "$(id -u):$(id -g)" subnetdesk-*.AppImage
-
-      - name: Publish appimage package
-        if: env.PUBLISH_RELEASE == 'true'
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        with:
-          prerelease: ${{ inputs.upload-tag == 'nightly' || contains(inputs.upload-tag, '-') }}
-          generate_release_notes: true
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            ./appimage/subnetdesk-${{ env.VERSION }}-*.AppImage
 
       - name: Upload AppImage package
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: subnetdesk-appimage-${{ matrix.job.arch }}
+          if-no-files-found: error
           path: ./appimage/subnetdesk-${{ env.VERSION }}-*.AppImage
 
   build-flatpak:
+    if: ${{ inputs.upload-artifact && inputs.linux-extras && (inputs.platform == 'all' || inputs.platform == 'linux') }}
     name: Build flatpak ${{ matrix.job.target }}${{ matrix.job.suffix }}
     needs:
+      - prepare
       - build-rustdesk-linux
     runs-on: ${{ matrix.job.on }}
-    if: ${{ inputs.upload-artifact }}
     strategy:
       fail-fast: false
-      matrix:
-        job:
-          - {
-              target: x86_64-unknown-linux-gnu,
-              # https://github.com/ostreedev/ostree/commit/4bac96a8c817beda37448f9b8c662162bb619981
-              distro: ubuntu22.04,
-              on: ubuntu-22.04,
-              arch: x86_64,
-              suffix: "",
-            }
-          - {
-              target: aarch64-unknown-linux-gnu,
-              # try out newer flatpak since error of "error: Nothing matches org.freedesktop.Platform in remote flathub"
-              distro: ubuntu22.04,
-              on: ubuntu-22.04-arm,
-              arch: aarch64,
-              suffix: "",
-            }
+      matrix: ${{ fromJSON(needs.prepare.outputs.flatpak-matrix) }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE_VERSION: ${{ needs.prepare.outputs.base-version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      SUBNETDESK_PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Checkout source code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -1955,152 +1834,55 @@ jobs:
             flatpak-builder --user --install-deps-from=flathub -y --force-clean --repo=repo ./build ./rustdesk.json
             flatpak build-bundle ./repo subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak com.subnetdesk.SubnetDesk
 
-      - name: Publish flatpak package
-        if: env.PUBLISH_RELEASE == 'true'
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        with:
-          prerelease: ${{ inputs.upload-tag == 'nightly' || contains(inputs.upload-tag, '-') }}
-          generate_release_notes: true
-          tag_name: ${{ env.TAG_NAME }}
-          files: |
-            flatpak/subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
-
       - name: Upload flatpak package
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: subnetdesk-flatpak-${{ matrix.job.arch }}${{ matrix.job.suffix }}
+          if-no-files-found: error
           path: flatpak/subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
 
-  publish-download-table:
-    name: Organize release downloads by system and architecture
-    if: ${{ always() && inputs.publish-release }}
+  publish-release:
+    name: Validate packages and publish complete release
     needs:
+      - prepare
       - build-for-windows-flutter
-      - build-rustdesk-ios
       - build-for-macOS
-      - publish_unsigned
-      - build-rustdesk-android
-      - build-rustdesk-android-universal
       - build-rustdesk-linux
       - build-appimage
       - build-flatpak
+      - build-rustdesk-linux-drm
+      - build-rustdesk-android
+      - build-rustdesk-android-universal
+    if: ${{ always() && !cancelled() && inputs.upload-artifact && needs.prepare.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-24.04
+    env:
+      SELECTED_PLATFORM: ${{ inputs.platform }}
+      SELECTED_ARCHITECTURE: ${{ inputs.architecture }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      LINUX_EXTRAS: ${{ inputs.linux-extras }}
     steps:
-      - name: Build the release download table
-        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
-        env:
-          RELEASE_TAG: ${{ env.TAG_NAME }}
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Download final packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          script: |
-            const tag = process.env.RELEASE_TAG;
-            const { data: release } = await github.rest.repos.getReleaseByTag({
-              ...context.repo,
-              tag,
-            });
-            const assets = await github.paginate(
-              github.rest.repos.listReleaseAssets,
-              {
-                ...context.repo,
-                release_id: release.id,
-                per_page: 100,
-              },
-            );
-
-            const architecture = (name) => {
-              const lower = name.toLowerCase();
-              if (lower.includes('universal')) return 'universal';
-              if (/(^|[-_.])(aarch64|arm64)([-_.]|$)/.test(lower)) return 'arm64';
-              if (/(^|[-_.])armv7([-_.]|$)/.test(lower)) return 'armv7';
-              if (/(^|[-_.])(x86_64|amd64)([-_.]|$)/.test(lower)) return 'x86_64';
-              return 'other';
-            };
-            const platform = (name) => {
-              const lower = name.toLowerCase();
-              if (lower.endsWith('.exe') || lower.endsWith('.msi')) return 'windows';
-              if (lower.endsWith('.dmg')) return 'macos';
-              if (lower.endsWith('.apk')) return 'android';
-              if (lower.endsWith('.ipa')) return 'ios';
-              if (
-                lower.endsWith('.deb') ||
-                lower.endsWith('.rpm') ||
-                lower.endsWith('.appimage') ||
-                lower.endsWith('.flatpak') ||
-                lower.endsWith('.zst')
-              ) return 'linux';
-              return 'other';
-            };
-            const label = (name) => {
-              const lower = name.toLowerCase();
-              if (lower.endsWith('-suse.rpm')) return 'RPM (SUSE)';
-              if (lower.endsWith('.pkg.tar.zst')) return 'Arch';
-              if (lower.endsWith('.appimage')) return 'AppImage';
-              const extension = name.split('.').pop();
-              return extension ? extension.toUpperCase() : '下载';
-            };
-            const cell = (targetArchitecture, targetPlatform) => {
-              const matches = assets
-                .filter((asset) =>
-                  architecture(asset.name) === targetArchitecture &&
-                  platform(asset.name) === targetPlatform
-                )
-                .sort((left, right) => left.name.localeCompare(right.name));
-              if (matches.length === 0) return '—';
-              return matches
-                .map((asset) => `[${label(asset.name)}](${asset.browser_download_url})`)
-                .join(' · ');
-            };
-
-            const rows = [
-              ['x86-64 (64 位)', 'x86_64'],
-              ['AArch64 / ARM64', 'arm64'],
-              ['ARMv7 (32 位)', 'armv7'],
-              ['通用包', 'universal'],
-            ];
-            const table = [
-              '<!-- subnetdesk-download-table:start -->',
-              tag === 'nightly'
-                ? '> ⚠️ Nightly 是主分支自动构建的测试版本，仅保留最新一次构建产物。'
-                : '> 请根据操作系统和 CPU 架构选择安装包。',
-              '',
-              '| 架构 | Windows | macOS | Linux | Android | iOS |',
-              '| --- | --- | --- | --- | --- | --- |',
-              ...rows.map(([title, arch]) =>
-                `| ${title} | ${cell(arch, 'windows')} | ${cell(arch, 'macos')} | ${cell(arch, 'linux')} | ${cell(arch, 'android')} | ${cell(arch, 'ios')} |`
-              ),
-              '',
-              '<details>',
-              '<summary>如何选择架构？</summary>',
-              '',
-              '- 普通 Intel / AMD 电脑请选择 **x86-64**。',
-              '- Windows on ARM、Apple Silicon 或 ARM Linux 请选择 **ARM64**。',
-              '- Android 不确定架构时优先选择 **通用包**。',
-              '',
-              '</details>',
-              '<!-- subnetdesk-download-table:end -->',
-            ].join('\n');
-
-            const start = '<!-- subnetdesk-download-table:start -->';
-            const end = '<!-- subnetdesk-download-table:end -->';
-            const oldBody = release.body || '';
-            const startIndex = oldBody.indexOf(start);
-            const endIndex = oldBody.indexOf(end);
-            let notes = oldBody;
-            if (startIndex !== -1 && endIndex !== -1 && endIndex >= startIndex) {
-              notes = [
-                oldBody.slice(0, startIndex),
-                oldBody.slice(endIndex + end.length),
-              ].join('').trim();
-            }
-            if (tag === 'nightly' && notes.includes('正在为最新的主分支提交构建测试包。')) {
-              notes = '';
-            }
-            const body = notes ? `${table}\n\n---\n\n${notes}` : table;
-
-            await github.rest.repos.updateRelease({
-              ...context.repo,
-              release_id: release.id,
-              name: tag === 'nightly' ? 'SubnetDesk Nightly' : release.name,
-              body,
-              prerelease: tag === 'nightly' || tag.includes('-'),
-            });
+          pattern: subnetdesk-*
+          path: build/release-artifacts
+      - name: Check package completeness and generate SHA256SUMS
+        run: |
+          extra_args=()
+          if [[ "$LINUX_EXTRAS" == 'true' ]]; then extra_args+=(--linux-extras); fi
+          python3 scripts/prepare_release.py --source build/release-artifacts --output build/release-packages --notes build/release-notes.md --platform "$SELECTED_PLATFORM" --architecture "$SELECTED_ARCHITECTURE" --tag "$RELEASE_TAG" "${extra_args[@]}"
+          (cd build/release-packages && sha256sum --check SHA256SUMS)
+          cat build/release-notes.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-packages-${{ needs.prepare.outputs.version }}
+          if-no-files-found: error
+          path: build/release-packages/*
+      - name: Publish packages after all selected builds succeed
+        if: inputs.publish-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/publish_release.sh "$RELEASE_TAG" build/release-packages build/release-notes.md

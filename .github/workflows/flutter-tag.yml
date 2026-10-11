@@ -5,12 +5,41 @@ permissions:
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Desktop platforms to build
+        type: choice
+        options: [all, windows, macos, linux]
+        default: all
+      architecture:
+        description: CPU architectures to build
+        type: choice
+        options: [all, x86_64, aarch64]
+        default: all
+      release-tag:
+        description: Release tag (blank uses Cargo version + Flutter build number)
+        type: string
+        default: ''
+      publish-release:
+        description: Publish a Release after all selected builds succeed
+        type: boolean
+        default: true
+      linux-extras:
+        description: Also build Arch, AppImage and Flatpak packages
+        type: boolean
+        default: false
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - '[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+.[0-9]+'
       - 'v[0-9]+.[0-9]+.[0-9]+-[0-9]+'
       - '[0-9]+.[0-9]+.[0-9]+-[0-9]+'
+
+concurrency:
+  group: subnetdesk-release-${{ inputs.release-tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   run-flutter-tag-build:
@@ -18,5 +47,9 @@ jobs:
     secrets: inherit
     with:
       upload-artifact: true
-      publish-release: true
-      upload-tag: ${{ github.ref_name }}
+      publish-release: ${{ github.event_name == 'push' || inputs.publish-release }}
+      build-mobile: false
+      platform: ${{ inputs.platform || 'all' }}
+      architecture: ${{ inputs.architecture || 'all' }}
+      linux-extras: ${{ inputs.linux-extras || false }}
+      upload-tag: ${{ github.event_name == 'push' && github.ref_name || inputs.release-tag || '' }}

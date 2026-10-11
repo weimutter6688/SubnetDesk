@@ -56,6 +56,11 @@ def system2(cmd):
 
 
 def get_version():
+    package_version = os.environ.get("SUBNETDESK_PACKAGE_VERSION")
+    if package_version is not None:
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+", package_version):
+            raise ValueError("SUBNETDESK_PACKAGE_VERSION must contain four numeric components")
+        return package_version
     with open("Cargo.toml", encoding="utf-8") as fh:
         for line in fh:
             if line.startswith("version"):

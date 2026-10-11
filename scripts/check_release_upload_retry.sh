@@ -8,7 +8,8 @@ nightly_workflow="$repo_root/.github/workflows/flutter-nightly.yml"
 uploader="$repo_root/scripts/upload_release_asset_with_retry.sh"
 
 grep -Fq 'build-mobile: false' "$nightly_workflow"
-grep -Fq 'bash scripts/upload_release_asset_with_retry.sh "$TAG_NAME" "subnetdesk-${VERSION}-${{ matrix.job.arch }}.dmg"' "$workflow"
+grep -Fq 'bash scripts/publish_release.sh' "$workflow"
+grep -Fq 'bash scripts/upload_release_asset_with_retry.sh' "$repo_root/scripts/publish_release.sh"
 
 test_dir="$(mktemp -d)"
 trap 'rm -rf "$test_dir"' EXIT

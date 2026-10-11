@@ -38,12 +38,13 @@ jobs:
           grep -Fq 'upload-artifact: true' .github/workflows/flutter-ci.yml
           grep -Fq 'publish-release: false' .github/workflows/flutter-ci.yml
           grep -Fq 'build-mobile: false' .github/workflows/flutter-ci.yml
-          grep -Fq 'publish-release: true' .github/workflows/flutter-tag.yml
+          grep -Fq 'publish-release:' .github/workflows/flutter-tag.yml
           grep -Fq 'publish-release: true' .github/workflows/flutter-nightly.yml
           grep -Fq 'branches:' .github/workflows/flutter-nightly.yml
           grep -Fq '      - master' .github/workflows/flutter-nightly.yml
-          grep -Fq 'Delete all existing nightly assets' .github/workflows/flutter-nightly.yml
-          grep -Fq 'publish-download-table:' .github/workflows/flutter-build.yml
+          ! grep -Fq 'Delete all existing nightly assets' .github/workflows/flutter-nightly.yml
+          grep -Fq 'publish-release:' .github/workflows/flutter-build.yml
+          python3 scripts/test_release.py
           grep -Fq 'flutter build linux --release --target-platform linux-arm64' .github/workflows/flutter-build.yml
           grep -Fq 'dart-${{ env.DART_VERSION }}-linux-arm64 --output dart-sdk.zip' .github/workflows/flutter-build.yml
           grep -Fq 'rm -f flutter/bin/cache/flutter_tools.snapshot flutter/bin/cache/flutter_tools.stamp' .github/workflows/flutter-build.yml
@@ -79,7 +80,9 @@ jobs:
           done
 
       - name: Check release upload retry contract
-        run: bash scripts/check_release_upload_retry.sh
+        run: |
+          bash scripts/check_release_upload_retry.sh
+          bash scripts/test_publish_release.sh
 
       - name: Check Python scripts
         run: python3 -m py_compile build.py scripts/generate_subnetdesk_icons.py scripts/download_verified.py

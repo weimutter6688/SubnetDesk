@@ -9,7 +9,7 @@ on:
       - master
     paths-ignore:
       - "docs/**"
-      - "README.md"
+      - "README*"
       - ".github/workflows/ci.yml"
   schedule:
     # schedule build every night
@@ -21,60 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  clear-old-nightly-assets:
-    name: Remove packages from the previous nightly
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Delete all existing nightly assets
-        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
-        with:
-          script: |
-            let release;
-            try {
-              ({ data: release } = await github.rest.repos.getReleaseByTag({
-                ...context.repo,
-                tag: 'nightly',
-              }));
-            } catch (error) {
-              if (error.status === 404) {
-                core.info('No previous nightly release exists.');
-                return;
-              }
-              throw error;
-            }
-
-            const assets = await github.paginate(
-              github.rest.repos.listReleaseAssets,
-              {
-                ...context.repo,
-                release_id: release.id,
-                per_page: 100,
-              },
-            );
-            for (const asset of assets) {
-              core.info(`Deleting old nightly asset: ${asset.name}`);
-              await github.rest.repos.deleteReleaseAsset({
-                ...context.repo,
-                asset_id: asset.id,
-              });
-            }
-
-            await github.rest.repos.updateRelease({
-              ...context.repo,
-              release_id: release.id,
-              name: 'SubnetDesk Nightly（构建中）',
-              body: [
-                '正在为最新的主分支提交构建测试包。',
-                '',
-                `提交：${context.sha}`,
-                '',
-                '旧包已移除，请等待本次构建完成后再下载。',
-              ].join('\n'),
-              prerelease: true,
-            });
-
   run-flutter-nightly-build:
-    needs: clear-old-nightly-assets
     uses: ./.github/workflows/flutter-build.yml
     secrets: inherit
     with:
@@ -82,31 +29,4 @@ jobs:
       publish-release: true
       build-mobile: false
       upload-tag: "nightly"
-
-  refresh-nightly-tag:
-    name: Point nightly at this successful build
-    needs: run-flutter-nightly-build
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Update nightly tag
-        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
-        with:
-          script: |
-            const ref = 'tags/nightly';
-            try {
-              await github.rest.git.updateRef({
-                ...context.repo,
-                ref,
-                sha: context.sha,
-                force: true,
-              });
-            } catch (error) {
-              if (error.status !== 404 && error.status !== 422) {
-                throw error;
-              }
-              await github.rest.git.createRef({
-                ...context.repo,
-                ref: `refs/${ref}`,
-                sha: context.sha,
-              });
-            }
+      linux-extras: false
