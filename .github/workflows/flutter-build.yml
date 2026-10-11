@@ -1316,10 +1316,9 @@ jobs:
                libssl-dev
             # we have libopus compiled by us.
             apt-get remove -y libopus-dev || true
-            # output devs
-            ls -l ./
-            tree -L 3 /opt/artifacts/vcpkg/installed
           run: |
+            # Host dependencies are mounted only when the container runs.
+            tree -L 3 /opt/artifacts/vcpkg/installed
             # disable git safe.directory
             git config --global --add safe.directory "*"
             # rust
@@ -1623,10 +1622,9 @@ jobs:
                libssl-dev
             # we have libopus compiled by us.
             apt-get remove -y libopus-dev || true
-            # output devs
-            ls -l ./
-            tree -L 3 /opt/artifacts/vcpkg/installed
           run: |
+            # Host dependencies are mounted only when the container runs.
+            tree -L 3 /opt/artifacts/vcpkg/installed
             # disable git safe.directory
             git config --global --add safe.directory "*"
             # rust
