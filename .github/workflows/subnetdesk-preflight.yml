@@ -46,6 +46,7 @@ jobs:
           ! grep -Fq 'Delete all existing nightly assets' .github/workflows/flutter-nightly.yml
           grep -Fq 'publish-release:' .github/workflows/flutter-build.yml
           python3 scripts/build_with_diagnostics.py python3 scripts/test_release.py
+          python3 scripts/test_build_with_diagnostics.py
           grep -Fq 'flutter build linux --release --target-platform linux-arm64' .github/workflows/flutter-build.yml
           grep -Eq 'dart-.*-linux-arm64 --output dart-sdk.zip' .github/workflows/flutter-build.yml
           grep -Fq 'rm -f flutter/bin/cache/flutter_tools.snapshot flutter/bin/cache/flutter_tools.stamp' .github/workflows/flutter-build.yml

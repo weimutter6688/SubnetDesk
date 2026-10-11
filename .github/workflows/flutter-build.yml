@@ -84,6 +84,7 @@ jobs:
       - name: Check release metadata and publication guards
         run: |
           python3 scripts/test_release.py
+          python3 scripts/test_build_with_diagnostics.py
           bash scripts/test_publish_release.sh
       - name: Validate and export build metadata
         id: metadata

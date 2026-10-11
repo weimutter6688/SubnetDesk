@@ -2,11 +2,14 @@
 """Run a build and attach its failure details to the Actions check annotation."""
 
 import collections
+import os
 import subprocess
 import sys
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     if len(sys.argv) < 2:
         print("usage: build_with_diagnostics.py <build command> [arguments]", file=sys.stderr)
         return 2
@@ -15,7 +18,8 @@ def main():
     if command[0] in ("python", "python3"):
         command[0] = sys.executable
     try:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        environment = dict(os.environ, PYTHONIOENCODING="utf-8")
+        process = subprocess.Popen(command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    universal_newlines=True, encoding="utf-8", errors="replace")
     except OSError as error:
         print("::error title=Build command could not start::" + str(error))
