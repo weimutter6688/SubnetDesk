@@ -2,11 +2,13 @@
 
 All notable SubnetDesk changes are documented in this file.
 
-## [1.3.0.86] - 2026-10-11
+## [1.3.0.87] - 2026-10-11
 
 - Add GitHub desktop releases for Windows, macOS and Linux on x86_64 and ARM64, without commercial signing certificates.
 - Validate package versions and completeness, generate SHA-256 checksums and publish stable releases only after every selected build succeeds.
 - Fix freshly generated Flutter bridge class names and Linux container dependency checks.
+- Package and launch the renamed macOS service helper; verify DMG contents, CPU architecture and signatures before uploading.
+- Forward UTF-8 build output on Windows and verify log handling with restrictive encodings.
 - Regenerate the embedded Web protocol for adaptive resolution and network telemetry fields.
 - Document manual and tag-triggered releases in `docs/github-releases.md`.
 

@@ -39,21 +39,21 @@ version = "1.3.0"
 
 ```yaml
 # flutter/pubspec.yaml
-version: 1.3.0+86
+version: 1.3.0+87
 ```
 
-对应包版本为 `1.3.0.86`，默认 Release 标签为 `v1.3.0.86`。这是安装包版本；Rust 原生基础版本仍为 `1.3.0`。
+对应包版本为 `1.3.0.87`，默认 Release 标签为 `v1.3.0.87`。这是安装包版本；Rust 原生基础版本仍为 `1.3.0`。
 
-下次发行可以把 Flutter 构建号改为 `87`，提交并推送后再运行工作流，默认生成 `v1.3.0.87`。不要复用已经公开的版本标签。Windows 修订号必须在 1–65535 范围内。
+下次发行可以把 Flutter 构建号改为 `88`，提交并推送后再运行工作流，默认生成 `v1.3.0.88`。不要复用已经公开的版本标签。Windows 修订号必须在 1–65535 范围内。
 
 也可以通过推送标签触发全平台、全架构构建：
 
 ```bash
-git tag v1.3.0.86
-git push origin v1.3.0.86
+git tag v1.3.0.87
+git push origin v1.3.0.87
 ```
 
-请在版本变更提交上创建标签。手填标签必须与源代码版本一致；已有标签必须指向当前构建的提交。兼容三段版本标签和 `v1.3.0-86` 格式，但建议始终使用完整的四段版本标签。
+请在版本变更提交上创建标签。手填标签必须与源代码版本一致；已有标签必须指向当前构建的提交。兼容三段版本标签和 `v1.3.0-87` 格式，但建议始终使用完整的四段版本标签。
 
 ## 下载与校验
 
@@ -62,7 +62,7 @@ git push origin v1.3.0.86
 Windows：
 
 ```powershell
-Get-FileHash .\subnetdesk-1.3.0.86-x86_64.msi -Algorithm SHA256
+Get-FileHash .\subnetdesk-1.3.0.87-x86_64.msi -Algorithm SHA256
 ```
 
 Linux：
@@ -74,7 +74,7 @@ sha256sum --check SHA256SUMS
 macOS：
 
 ```bash
-shasum -a 256 subnetdesk-1.3.0.86-aarch64.dmg
+shasum -a 256 subnetdesk-1.3.0.87-aarch64.dmg
 ```
 
 对照同一 Release 的 `SHA256SUMS`。`build-manifest.json` 记录提交、运行编号、目标平台、文件大小和校验和；校验和用于检测下载损坏，不等同于发布者的数字签名。
