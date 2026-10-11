@@ -154,6 +154,9 @@ Windows 桌面发行包包含便携版 `.zip`。请完整解压后运行 `Subnet
 [fork 安全复查](docs/fork-security-review.md)、[构建输入校验](docs/build-inputs.md)、
 [Rust 质量门](docs/rust-quality-gates.md)和[上游安全跟踪](docs/upstream-baseline.md)。
 
+合入 RustDesk 或原版 SubnetDesk 的更新，请按[上游更新操作手册](docs/upstream-update-guide.md)
+建立独立分支、逐项移植修复并验证测试包，再发布新版本。
+
 与其他远程控制软件一样，请只向可信网络开放监听端口，使用高强度且不重复的密码，并尽可能通过另一条可信渠道核对设备指纹。
 
 

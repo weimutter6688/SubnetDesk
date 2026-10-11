@@ -1,5 +1,8 @@
 # Upstream baseline and security review
 
+For the step-by-step import, validation and release procedure, see the
+[upstream update guide (Chinese)](upstream-update-guide.md).
+
 The fork point is RustDesk commit
 [`5abf4e9724dc9a8c9b45dfe13e71af11616eb2c8`](https://github.com/rustdesk/rustdesk/commit/5abf4e9724dc9a8c9b45dfe13e71af11616eb2c8),
 "Fix disabled installation bypass (#15598)", committed on 2026-07-16.

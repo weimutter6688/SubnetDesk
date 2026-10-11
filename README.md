@@ -162,6 +162,10 @@ custom-client signing trust are removed. See the [fork checklist review](docs/fo
 [verified build inputs](docs/build-inputs.md), [Rust quality gates](docs/rust-quality-gates.md)
 and [upstream security tracking](docs/upstream-baseline.md).
 
+For RustDesk or original SubnetDesk updates, follow the
+[upstream update guide (Chinese)](docs/upstream-update-guide.md) to review and import
+fixes on a separate branch, validate test packages, and publish a new version.
+
 As with any remote-control software, expose the listening port only to trusted networks, use a strong unique password, and verify fingerprints through a separate trusted channel when possible.
 
 
