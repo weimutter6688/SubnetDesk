@@ -606,7 +606,9 @@ jobs:
           CREATE_DMG="$(command -v create-dmg)"
           CREATE_DMG="$(readlink -f "$CREATE_DMG")"
           sed -i -e 's/MAXIMUM_UNMOUNTING_ATTEMPTS=3/MAXIMUM_UNMOUNTING_ATTEMPTS=7/' "$CREATE_DMG"
-          create-dmg --icon "SubnetDesk.app" 200 190 --hide-extension "SubnetDesk.app" --window-size 800 400 --app-drop-link 600 185 subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg ./flutter/build/macos/Build/Products/Release/SubnetDesk.app
+          mkdir dmg-content
+          cp -R ./flutter/build/macos/Build/Products/Release/SubnetDesk.app dmg-content/
+          create-dmg --icon "SubnetDesk.app" 200 190 --hide-extension "SubnetDesk.app" --window-size 800 400 --app-drop-link 600 185 subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg ./dmg-content
 
       - name: Codesign app and create signed dmg
         if: inputs.sign-macos && env.MACOS_P12_BASE64 != '' && env.UPLOAD_ARTIFACT == 'true'
@@ -621,10 +623,16 @@ jobs:
           # start sign the rustdesk.app and dmg
           rm -rf *.dmg || true
           codesign --force --options runtime -s ${{ secrets.MACOS_CODESIGN_IDENTITY }} --deep --strict --entitlements ./flutter/macos/Runner/Release.entitlements ./flutter/build/macos/Build/Products/Release/SubnetDesk.app -vvv
-          create-dmg --icon "SubnetDesk.app" 200 190 --hide-extension "SubnetDesk.app" --window-size 800 400 --app-drop-link 600 185 subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg ./flutter/build/macos/Build/Products/Release/SubnetDesk.app
+          mkdir dmg-signed-content
+          cp -R ./flutter/build/macos/Build/Products/Release/SubnetDesk.app dmg-signed-content/
+          create-dmg --icon "SubnetDesk.app" 200 190 --hide-extension "SubnetDesk.app" --window-size 800 400 --app-drop-link 600 185 subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg ./dmg-signed-content
           codesign --force --options runtime -s ${{ secrets.MACOS_CODESIGN_IDENTITY }} --deep --strict subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg -vvv
           # notarize the architecture-specific SubnetDesk DMG
           rcodesign notary-submit --api-key-path ${{ github.workspace }}/rustdesk.json --staple subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg
+
+      - name: Verify macOS disk image contents and signatures
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: python3 scripts/verify_macos_dmg.py subnetdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg ${{ matrix.job.arch }}
 
       - name: Upload macOS installer
         if: env.UPLOAD_ARTIFACT == 'true'
