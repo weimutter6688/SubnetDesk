@@ -25,7 +25,9 @@ def main():
         recent.append(line.rstrip())
     status = process.wait()
     if status:
-        detail = "\n".join(recent)[-24000:]
+        # Check annotations can truncate large messages at the beginning. Keep
+        # the final compiler/packaging error within the visible message limit.
+        detail = "\n".join(recent)[-3500:]
         detail = detail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
         print("::error title=Build failure details::" + detail)
     return status if status >= 0 else 1
