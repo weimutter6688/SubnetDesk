@@ -11,8 +11,15 @@ def main():
         print("usage: build_with_diagnostics.py <build command> [arguments]", file=sys.stderr)
         return 2
     recent = collections.deque(maxlen=120)
-    process = subprocess.Popen(sys.argv[1:], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                               universal_newlines=True, encoding="utf-8", errors="replace")
+    command = sys.argv[1:]
+    if command[0] in ("python", "python3"):
+        command[0] = sys.executable
+    try:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   universal_newlines=True, encoding="utf-8", errors="replace")
+    except OSError as error:
+        print("::error title=Build command could not start::" + str(error))
+        return 127
     for line in process.stdout:
         print(line, end="", flush=True)
         recent.append(line.rstrip())

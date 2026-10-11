@@ -40,12 +40,19 @@ for asset in "$packages"/*; do
 done
 
 # Prune stale files only after every replacement was built, checked, and uploaded.
-release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq .id)
+release_api=$(gh release view "$tag" --json apiUrl --jq .apiUrl)
+release_id="${release_api##*/}"
+if ! [[ "$release_id" =~ ^[0-9]+$ ]]; then
+  echo "Invalid release identifier: $release_id" >&2
+  exit 1
+fi
+release_assets=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[] | [.id, .name] | @tsv')
 while IFS=$'\t' read -r asset_id asset_name; do
+  [[ -n "$asset_id" ]] || continue
   if [[ ! -f "$packages/$asset_name" ]]; then
     gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
   fi
-done < <(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[] | [.id, .name] | @tsv')
+done <<< "$release_assets"
 
 if [[ "$tag" == 'nightly' ]]; then
   gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" -f sha="$GITHUB_SHA" -F force=true

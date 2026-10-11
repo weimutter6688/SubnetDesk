@@ -64,6 +64,12 @@ jobs:
       run: |
         bun run generate:proto
         bun run build
+        changed=$(git diff --name-only -- src/generated dist)
+        if [[ -n "$changed" ]]; then
+          while IFS= read -r file; do
+            echo "::error file=web/$file::Generated asset differs from the committed version: $file"
+          done <<< "$changed"
+        fi
         git diff --exit-code -- src/generated dist
 
   rust-format:

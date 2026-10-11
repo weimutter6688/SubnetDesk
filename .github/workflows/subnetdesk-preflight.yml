@@ -35,6 +35,7 @@ jobs:
 
       - name: Check installer artifact contract
         run: |
+          trap 'echo "::error title=Installer artifact contract::Command failed at line $LINENO: $BASH_COMMAND"' ERR
           grep -Fq 'upload-artifact: true' .github/workflows/flutter-ci.yml
           grep -Fq 'publish-release: false' .github/workflows/flutter-ci.yml
           grep -Fq 'build-mobile: false' .github/workflows/flutter-ci.yml
@@ -44,7 +45,7 @@ jobs:
           grep -Fq '      - master' .github/workflows/flutter-nightly.yml
           ! grep -Fq 'Delete all existing nightly assets' .github/workflows/flutter-nightly.yml
           grep -Fq 'publish-release:' .github/workflows/flutter-build.yml
-          python3 scripts/test_release.py
+          python3 scripts/build_with_diagnostics.py python3 scripts/test_release.py
           grep -Fq 'flutter build linux --release --target-platform linux-arm64' .github/workflows/flutter-build.yml
           grep -Fq 'dart-${{ env.DART_VERSION }}-linux-arm64 --output dart-sdk.zip' .github/workflows/flutter-build.yml
           grep -Fq 'rm -f flutter/bin/cache/flutter_tools.snapshot flutter/bin/cache/flutter_tools.stamp' .github/workflows/flutter-build.yml
@@ -52,7 +53,7 @@ jobs:
           ! grep -Fq 'flutter-elinux' .github/workflows/flutter-build.yml
           ! grep -Fq "features.append('software-update')" build.py
           ! grep -Fq 'software-update' flutter/run.sh
-          sed -n '/^  build-for-windows-flutter:/,/^  build-for-windows-sciter:/p' .github/workflows/flutter-build.yml | grep -Fq 'toolchain: ${{ env.RUST_VERSION }}'
+          sed -n '/^  build-for-windows-flutter:/,/^  build-for-windows-sciter:/p' .github/workflows/flutter-build.yml | grep -F 'toolchain: ${{ env.RUST_VERSION }}' > /dev/null
           for artifact in \
             'name: subnetdesk-windows-' \
             'name: subnetdesk-macos-' \

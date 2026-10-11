@@ -18,7 +18,9 @@ cat > "$task_dir/bin/gh" <<'EOF'
 set -euo pipefail
 printf '%s\n' "$*" >> "$PUBLISH_TEST_LOG"
 if [[ "$1 $2" == 'release view' ]]; then
-  if [[ "$PUBLISH_TEST_MODE" == 'published' ]]; then
+  if [[ "$*" == *'apiUrl'* ]]; then
+    printf 'https://api.github.com/repos/owner/repo/releases/123\n'
+  elif [[ "$PUBLISH_TEST_MODE" == 'published' ]]; then
     printf '{"isDraft":false}\n'
   else
     printf '{"isDraft":true}\n'
