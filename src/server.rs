@@ -8,6 +8,8 @@ use std::{
 pub use connection::*;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::config::Config2;
+#[cfg(target_os = "linux")]
+use hbb_common::timeout;
 use hbb_common::{
     allow_err,
     anyhow::Context,
