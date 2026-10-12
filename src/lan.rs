@@ -5,6 +5,7 @@ use hbb_common::{
     anyhow::bail,
     config::Config,
     config::{self},
+    futures::{stream, StreamExt},
     log,
     protobuf::Message as _,
     rendezvous_proto::*,
@@ -19,7 +20,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 const LAN_DISCOVERY_PORT: u16 = 21_119;
@@ -184,9 +185,17 @@ pub(crate) async fn discover_async() -> ResultType<()> {
         return Ok(());
     }
     let _guard = DiscoveryGuard;
+    let hosts = tokio::task::spawn_blocking(|| {
+        known_discovery_hosts(
+            &config::LocalConfig::get_recent_lan_endpoints(),
+            &config::LanPeers::load().peers,
+        )
+    })
+    .await?;
+    let targets = resolve_discovery_targets(hosts).await;
     let (tx, rx) = unbounded_channel::<_>();
     let mut worker_started = false;
-    match send_query() {
+    match send_query(&targets) {
         Ok(sockets) if !sockets.is_empty() => {
             spawn_wait_responses(sockets, tx.clone());
             worker_started = true;
@@ -407,7 +416,87 @@ fn create_broadcast_sockets() -> Vec<(UdpSocket, Ipv4Addr)> {
     sockets
 }
 
-fn send_query() -> ResultType<Vec<UdpSocket>> {
+fn known_discovery_hosts(
+    recent: &[config::RecentLanEndpoint],
+    peers: &[config::DiscoveryPeer],
+) -> BTreeSet<String> {
+    let mut hosts = recent
+        .iter()
+        .map(|peer| peer.endpoint.as_str())
+        .chain(peers.iter().map(|peer| {
+            if peer.endpoint.is_empty() {
+                peer.id.as_str()
+            } else {
+                peer.endpoint.as_str()
+            }
+        }))
+        .filter_map(|endpoint| hbb_common::lan::Endpoint::parse(endpoint).ok())
+        .map(|endpoint| endpoint.host().to_owned())
+        .collect::<BTreeSet<_>>();
+    hosts.extend(
+        peers
+            .iter()
+            .flat_map(|peer| peer.ip_mac.keys())
+            .filter_map(|address| address.parse::<IpAddr>().ok())
+            .map(|address| address.to_string()),
+    );
+    hosts
+}
+
+fn unicast_discovery_address(address: IpAddr) -> bool {
+    // The UDP discovery listener currently supports IPv4 only.
+    matches!(address, IpAddr::V4(ip) if connectable_local_address(address) && !ip.is_broadcast())
+}
+
+async fn resolve_discovery_targets(hosts: BTreeSet<String>) -> Vec<SocketAddr> {
+    let mut targets = BTreeSet::new();
+    let mut names = Vec::new();
+    for host in hosts {
+        match host.parse::<IpAddr>() {
+            Ok(address) if unicast_discovery_address(address) => {
+                targets.insert(SocketAddr::new(address, get_broadcast_port()));
+            }
+            Ok(_) => {}
+            Err(_) => names.push(host),
+        }
+    }
+    let mut lookups = stream::iter(names)
+        .map(|host| async move {
+            let result = tokio::net::lookup_host((host.as_str(), get_broadcast_port()))
+                .await
+                .map(|addresses| addresses.collect::<Vec<_>>());
+            (host, result)
+        })
+        .buffer_unordered(16);
+    // A slow DNS server must not prevent known IPs from being probed.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        match tokio::time::timeout_at(deadline, lookups.next()).await {
+            Ok(Some((_, Ok(addresses)))) => targets.extend(
+                addresses
+                    .into_iter()
+                    .filter(|address| unicast_discovery_address(address.ip())),
+            ),
+            Ok(Some((host, Err(err)))) => {
+                log::debug!("Failed to resolve LAN discovery host {host}: {err}");
+            }
+            Ok(None) => break,
+            Err(err) => {
+                log::debug!("LAN discovery hostname lookup timed out: {err}");
+                break;
+            }
+        }
+    }
+    targets.into_iter().collect()
+}
+
+fn send_unicast_queries(socket: &UdpSocket, targets: &[SocketAddr], query: &[u8]) {
+    for target in targets {
+        allow_err!(socket.send_to(query, target));
+    }
+}
+
+fn send_query(targets: &[SocketAddr]) -> ResultType<Vec<UdpSocket>> {
     let sockets = create_broadcast_sockets();
     if sockets.is_empty() {
         bail!("Found no bindable ipv4 addresses");
@@ -424,6 +513,11 @@ fn send_query() -> ResultType<Vec<UdpSocket>> {
     let out = msg_out.write_to_bytes()?;
     let maddr = SocketAddr::from(([255, 255, 255, 255], get_broadcast_port()));
     for (socket, broadcast) in &sockets {
+        // Let routing choose the source interface for peers on another subnet.
+        // Sending once from the wildcard socket also avoids per-interface duplicates.
+        if socket.local_addr()?.ip().is_unspecified() {
+            send_unicast_queries(socket, targets, &out);
+        }
         let directed = SocketAddr::from((*broadcast, get_broadcast_port()));
         allow_err!(socket.send_to(&out, directed));
         if *broadcast != Ipv4Addr::BROADCAST {
@@ -618,6 +712,116 @@ pub(crate) fn find_discovered_peer<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn unicast_targets_cover_history_and_cached_addresses_without_duplicates() {
+        let recent = vec![
+            config::RecentLanEndpoint {
+                endpoint: "10.8.0.15:22000".to_owned(),
+                ..Default::default()
+            },
+            config::RecentLanEndpoint {
+                endpoint: "10.8.0.15:21118".to_owned(),
+                ..Default::default()
+            },
+            config::RecentLanEndpoint {
+                endpoint: "invalid:0".to_owned(),
+                ..Default::default()
+            },
+        ];
+        let peers = vec![config::DiscoveryPeer {
+            id: "192.168.2.20:21118".to_owned(),
+            ip_mac: HashMap::from([
+                ("10.8.0.15".to_owned(), String::new()),
+                ("192.168.2.21".to_owned(), String::new()),
+                ("not-an-ip".to_owned(), String::new()),
+            ]),
+            ..Default::default()
+        }];
+
+        assert_eq!(
+            resolve_discovery_targets(known_discovery_hosts(&recent, &peers)).await,
+            [
+                "10.8.0.15:21119",
+                "192.168.2.20:21119",
+                "192.168.2.21:21119"
+            ]
+            .into_iter()
+            .map(|address| address.parse::<SocketAddr>().unwrap())
+            .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn unicast_targets_exclude_broadcast_multicast_and_unusable_addresses() {
+        let hosts = [
+            "0.0.0.0",
+            "127.0.0.1",
+            "255.255.255.255",
+            "224.0.0.251",
+            "fd00::20",
+            "10.8.0.15",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        assert_eq!(
+            resolve_discovery_targets(hosts).await,
+            vec!["10.8.0.15:21119".parse::<SocketAddr>().unwrap()]
+        );
+    }
+
+    #[test]
+    fn unicast_response_updates_presence_only_for_the_matching_device() {
+        // Use only ephemeral loopback ports; no real devices or persisted config.
+        let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let responder = UdpSocket::bind("127.0.0.1:0").unwrap();
+        responder
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut query = Message::new();
+        query.set_peer_discovery(PeerDiscovery {
+            cmd: "ping".to_owned(),
+            id: "b".repeat(64),
+            ..Default::default()
+        });
+        send_unicast_queries(
+            &socket,
+            &[responder.local_addr().unwrap()],
+            &query.write_to_bytes().unwrap(),
+        );
+        let mut buf = [0; 2048];
+        let (len, addr) = responder.recv_from(&mut buf).unwrap();
+        let received = Message::parse_from_bytes(&buf[..len]).unwrap();
+        assert_eq!(received.peer_discovery().cmd, "ping");
+        assert_eq!(received.peer_discovery().id, "b".repeat(64));
+
+        let mut response = Message::new();
+        response.set_peer_discovery(PeerDiscovery {
+            cmd: "pong".to_owned(),
+            id: "a".repeat(64),
+            hostname: "Routed device".to_owned(),
+            platform: "Windows".to_owned(),
+            misc: serde_json::json!({"port": 22000}).to_string(),
+            ..Default::default()
+        });
+        responder
+            .send_to(&response.write_to_bytes().unwrap(), addr)
+            .unwrap();
+        let (tx, mut rx) = unbounded_channel();
+        wait_response(socket, Some(Duration::from_millis(10)), tx).unwrap();
+        let mut peer = rx.try_recv().unwrap();
+        assert_eq!(peer.endpoint, "127.0.0.1:22000");
+        assert_eq!(peer.hostname, "Routed device");
+        peer.mark_seen(100_000);
+        let peers = [peer];
+        assert_eq!(
+            find_discovered_peer(&peers, &"A".repeat(64), "10.8.0.15:22000")
+                .and_then(|peer| peer.online_state(100_001)),
+            Some(true)
+        );
+        assert!(find_discovered_peer(&peers, &"c".repeat(64), &peers[0].endpoint).is_none());
+    }
 
     #[test]
     fn discovery_presence_follows_identity_not_reassigned_address() {

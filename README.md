@@ -125,7 +125,7 @@ Successful connections appear in recent devices independently of **Remember pass
 
 - Both devices can route to each other.
 - TCP port `21118` (or your configured port) is allowed by the host firewall.
-- mDNS is available when automatic discovery is needed; direct address entry still works without it.
+- Automatic discovery uses mDNS and UDP broadcasts within the local subnet. With discovery enabled on both devices, known IPv4 devices in recent history/favorites are also probed directly over UDP `21119` across routed networks. Direct address entry works without discovery.
 - The controlled device's CIDR allowlist includes the controller's network.
 - On Linux, see [host readiness notes](docs/linux-host-readiness.md) for SELinux, Wayland, and login-screen guidance.
 
