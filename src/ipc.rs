@@ -1,5 +1,7 @@
 #[path = "ipc/auth.rs"]
 mod ipc_auth;
+#[cfg(all(not(any(target_os = "android", target_os = "ios")), any(target_os = "linux", test)))]
+pub(crate) mod input_client;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "ipc/fs.rs"]
 mod ipc_fs;

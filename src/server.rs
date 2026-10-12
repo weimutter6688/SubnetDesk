@@ -12,12 +12,11 @@ use hbb_common::{
     allow_err,
     anyhow::Context,
     bail,
-    bytes::Bytes,
     config::Config,
     log,
     message_proto::*,
     protobuf::{Enum, Message as _},
-    timeout, tokio, ResultType, Stream,
+    tokio, ResultType, Stream,
 };
 use scrap::camera;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -45,6 +44,8 @@ pub(crate) mod wayland;
 pub(crate) mod drm_capturer;
 #[cfg(target_os = "linux")]
 pub mod uinput;
+#[cfg(all(not(any(target_os = "android", target_os = "ios")), any(target_os = "linux", test)))]
+mod uinput_client;
 #[cfg(target_os = "linux")]
 pub mod rdp_input;
 #[cfg(target_os = "linux")]

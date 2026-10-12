@@ -1474,8 +1474,8 @@ mod tests {
         }
         let display = usize::MAX - 1;
         let sp = GenericService::new("cache-test".into(), false);
-        let (fast_tx, mut fast_rx) = hbb_common::tokio::sync::mpsc::unbounded_channel();
-        let (slow_tx, mut slow_rx) = hbb_common::tokio::sync::mpsc::unbounded_channel();
+        let (fast_tx, mut fast_rx) = super::message_channel(&super::QueueFailure::default());
+        let (slow_tx, mut slow_rx) = super::message_channel(&super::QueueFailure::default());
         sp.on_subscribe(ConnInner::new(-101, None, Some(fast_tx)));
         sp.on_subscribe(ConnInner::new(-102, None, Some(slow_tx)));
         let mut viewers = HashMap::from([(-101, viewer()), (-102, viewer())]);

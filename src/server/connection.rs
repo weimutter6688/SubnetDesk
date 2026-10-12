@@ -64,9 +64,38 @@ use system_shutdown;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use zeroize::Zeroize;
 
+mod queue;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod ipc_bridge;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use ipc_bridge::start_ipc;
+pub(crate) use queue::{message_channel, QueueFailure};
+use queue::{BoundedReceiver, BoundedSender, BlockingReceiver};
+
+#[cfg(target_os = "android")]
+type IpcSender = mpsc::UnboundedSender<ipc::Data>;
+#[cfg(target_os = "android")]
+type IpcReceiver = mpsc::UnboundedReceiver<ipc::Data>;
+#[cfg(not(target_os = "android"))]
+type IpcSender = BoundedSender<ipc::Data>;
+#[cfg(not(target_os = "android"))]
+type IpcReceiver = BoundedReceiver<ipc::Data>;
+
+fn ipc_channel(failure: &QueueFailure) -> (IpcSender, IpcReceiver) {
+    #[cfg(target_os = "android")]
+    {
+        let _ = failure;
+        mpsc::unbounded_channel()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        queue::ipc_channel(failure)
+    }
+}
+
 #[cfg(windows)]
 use crate::virtual_display_manager;
-pub type Sender = mpsc::UnboundedSender<(Instant, Arc<Message>)>;
+pub type Sender = BoundedSender<(Instant, Arc<Message>)>;
 
 #[derive(Copy, Clone)]
 struct WebPermissionSet {
@@ -151,7 +180,7 @@ pub static MOUSE_MOVE_TIME: AtomicI64 = AtomicI64::new(0);
 #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 lazy_static::lazy_static! {
-    static ref PLUGIN_BLOCK_INPUT_TXS: Arc<Mutex<HashMap<String, std_mpsc::Sender<MessageInput>>>> = Default::default();
+    static ref PLUGIN_BLOCK_INPUT_TXS: Arc<Mutex<HashMap<String, BoundedSender<MessageInput>>>> = Default::default();
     static ref PLUGIN_BLOCK_INPUT_TX_RX: (Arc<Mutex<std_mpsc::Sender<bool>>>, Arc<Mutex<std_mpsc::Receiver<bool>>>) = {
         let (tx, rx) = std_mpsc::channel();
         (Arc::new(Mutex::new(tx)), Arc::new(Mutex::new(rx)))
@@ -218,6 +247,22 @@ enum MessageInput {
     BlockOffPlugin(String),
 }
 
+fn input_weight(input: &MessageInput) -> usize {
+    let payload = match input {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        MessageInput::Mouse(input) => input.msg.compute_size() as usize + input.username.len(),
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        MessageInput::Key((key, _)) => key.compute_size() as usize,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        MessageInput::Pointer((pointer, _)) => pointer.compute_size() as usize,
+        #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        MessageInput::BlockOnPlugin(peer) | MessageInput::BlockOffPlugin(peer) => peer.len(),
+        _ => 0,
+    };
+    payload.saturating_add(std::mem::size_of::<MessageInput>())
+}
+
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct SessionKey {
     peer_id: String,
@@ -234,8 +279,8 @@ struct Session {
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 struct StartCmIpcPara {
-    rx_to_cm: mpsc::UnboundedReceiver<ipc::Data>,
-    tx_from_cm: mpsc::UnboundedSender<ipc::Data>,
+    rx_to_cm: IpcReceiver,
+    tx_from_cm: IpcSender,
     rx_desktop_ready: mpsc::Receiver<()>,
     tx_cm_stream_ready: mpsc::Sender<()>,
 }
@@ -305,7 +350,8 @@ pub struct Connection {
     terminal: bool,
     port_forward_socket: Option<Framed<TcpStream, BytesCodec>>,
     port_forward_address: String,
-    tx_to_cm: mpsc::UnboundedSender<ipc::Data>,
+    tx_to_cm: IpcSender,
+    queue_failure: QueueFailure,
     authorized: bool,
     auth_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     web_client: bool,
@@ -338,7 +384,7 @@ pub struct Connection {
     // by peer
     audio_sender: Option<MediaSender>,
     // audio by the remote peer/client
-    tx_input: std_mpsc::Sender<MessageInput>,
+    tx_input: BoundedSender<MessageInput>,
     // handle input messages
     video_ack_required: bool,
     lr: LoginRequest,
@@ -470,13 +516,16 @@ impl Connection {
         auth_permit: tokio::sync::OwnedSemaphorePermit,
     ) {
         let _raii_id = raii::ConnectionID::new(id);
-        let (tx_from_cm_holder, mut rx_from_cm) = mpsc::unbounded_channel::<ipc::Data>();
+        let queue_failure = QueueFailure::default();
+        let (tx_from_cm_holder, mut rx_from_cm) = ipc_channel(&queue_failure);
         // holding tx_from_cm_holder to avoid cpu burning of rx_from_cm.recv when all sender closed
         let tx_from_cm = tx_from_cm_holder.clone();
-        let (tx_to_cm, rx_to_cm) = mpsc::unbounded_channel::<ipc::Data>();
-        let (tx, mut rx) = mpsc::unbounded_channel::<(Instant, Arc<Message>)>();
-        let (tx_video, mut rx_video) = mpsc::unbounded_channel::<(Instant, Arc<Message>)>();
-        let (tx_input, _rx_input) = std_mpsc::channel();
+        let (tx_to_cm, rx_to_cm) = ipc_channel(&queue_failure);
+        let (tx, mut rx) = message_channel(&queue_failure);
+        let (tx_video, mut rx_video) = message_channel(&queue_failure);
+        let (tx_input, _rx_input) = queue::blocking_channel(
+            "input", 1024, 4 * 1024 * 1024, &queue_failure, input_weight,
+        );
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let (tx_cm_stream_ready, _rx_cm_stream_ready) = mpsc::channel(1);
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -505,6 +554,7 @@ impl Connection {
             port_forward_socket: None,
             port_forward_address: "".to_owned(),
             tx_to_cm,
+            queue_failure: queue_failure.clone(),
             authorized: false,
             auth_permit: Some(auth_permit),
             web_client: meta.web_client,
@@ -628,6 +678,10 @@ impl Connection {
 
         loop {
             tokio::select! {
+                _ = queue_failure.wait() => {
+                    conn.on_close("Connection queue exceeded its budget", true).await;
+                    break;
+                }
                 _ = &mut authentication_deadline, if !conn.authorized => {
                     conn.on_close("Authentication timed out", true).await;
                     break;
@@ -997,7 +1051,7 @@ impl Connection {
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn handle_input(receiver: std_mpsc::Receiver<MessageInput>, tx: Sender) {
+    fn handle_input(receiver: BlockingReceiver<MessageInput>, tx: Sender) {
         let mut block_input_mode = false;
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
@@ -1086,12 +1140,18 @@ impl Connection {
                     }
                 },
                 Err(err) => {
+                    if std_mpsc::RecvTimeoutError::Disconnected == err {
+                        if block_input_mode {
+                            let (ok, message) = crate::platform::block_input(false);
+                            if !ok {
+                                log::warn!("Failed to release blocked input: {message}");
+                            }
+                        }
+                        break;
+                    }
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
                     if block_input_mode {
                         let _ = crate::platform::block_input(true);
-                    }
-                    if std_mpsc::RecvTimeoutError::Disconnected == err {
-                        break;
                     }
                 }
             }
@@ -1103,13 +1163,16 @@ impl Connection {
 
     async fn try_port_forward_loop(
         &mut self,
-        rx_from_cm: &mut mpsc::UnboundedReceiver<Data>,
+        rx_from_cm: &mut IpcReceiver,
     ) -> ResultType<()> {
         let mut last_recv_time = Instant::now();
         if let Some(mut forward) = self.port_forward_socket.take() {
             log::info!("Running port forwarding loop");
             loop {
                 tokio::select! {
+                    _ = self.queue_failure.wait() => {
+                        bail!("Connection queue exceeded its budget");
+                    }
                     Some(data) = rx_from_cm.recv() => {
                         match data {
                             ipc::Data::Close => {
@@ -4964,224 +5027,6 @@ impl Connection {
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn connection_manager_launch_args() -> Vec<&'static str> {
     vec!["--cm-no-ui"]
-}
-
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-// IPC bootstrap summary:
-// - Resolve target CM socket (headless/non-headless, optional UID-scoped path on Linux).
-// - Start CM when missing, then bridge bidirectional messages between this task and CM IPC.
-async fn start_ipc(
-    mut rx_to_cm: mpsc::UnboundedReceiver<ipc::Data>,
-    tx_from_cm: mpsc::UnboundedSender<ipc::Data>,
-    mut _rx_desktop_ready: mpsc::Receiver<()>,
-    tx_stream_ready: mpsc::Sender<()>,
-) -> ResultType<()> {
-    use hbb_common::anyhow::anyhow;
-
-    loop {
-        if !crate::platform::is_prelogin() {
-            break;
-        }
-        sleep(1.).await;
-    }
-    #[cfg(target_os = "linux")]
-    let headless_cm = crate::is_server()
-        && crate::platform::is_headless_allowed()
-        && linux_desktop_manager::is_headless();
-    #[cfg(not(target_os = "linux"))]
-    let headless_cm = false;
-    let mut stream = None;
-    if !headless_cm {
-        if let Ok(s) = crate::ipc::connect(1000, "_cm").await {
-            stream = Some(s);
-        }
-    }
-    if stream.is_none() {
-        let args = connection_manager_launch_args();
-        #[allow(unused_mut)]
-        #[cfg(target_os = "linux")]
-        let mut user = None;
-
-        // Cm run as user, wait until desktop session is ready.
-        #[cfg(target_os = "linux")]
-        if headless_cm {
-            let mut username = linux_desktop_manager::get_username();
-            loop {
-                if !username.is_empty() {
-                    break;
-                }
-                // `_rx_desktop_ready` is used as a wake-up signal from desktop/session state changes
-                // (for example wait_desktop_cm_ready paths). It is not itself a proof of CM readiness.
-                // TODO:
-                // When `_rx_desktop_ready` is closed, `recv()` returns
-                // `None` immediately and this loop may spin if `username` remains empty.
-                // Keep behavior unchanged for now; if field reports appear, handle `Ok(None)` by
-                // breaking/returning to avoid hot-looping.
-                let _res = timeout(1_000, _rx_desktop_ready.recv()).await;
-                username = linux_desktop_manager::get_username();
-            }
-            let uid = {
-                let username_for_cmd = username.clone();
-                let mut uid_cmd = hbb_common::tokio::process::Command::new("id");
-                // TODO:
-                // Keep current behavior for now to minimize change risk.
-                // If usernames starting with '-' are observed in the field, prefer:
-                // `id -u -- <username>` to avoid option-parsing ambiguity.
-                // Already verified that `id -u -- <username>` works as expected on macOS and Ubuntu 24.04.
-                uid_cmd.arg("-u").arg(&username_for_cmd).kill_on_drop(true);
-                let output = timeout(10_000, uid_cmd.output())
-                    .await
-                    .map_err(|_| anyhow!("Timed out querying uid for {}", username))?
-                    .map_err(|e| anyhow!("Failed to run `id -u {}`: {}", username, e))?;
-                if !output.status.success() {
-                    bail!("Failed to query uid for {}", username);
-                }
-                let output = String::from_utf8_lossy(&output.stdout);
-                let output = output.trim();
-                if output.parse::<u32>().is_err() {
-                    bail!("Invalid uid {}", output);
-                }
-                output.to_string()
-            };
-            user = Some((uid, username));
-        }
-        #[cfg(target_os = "linux")]
-        let cm_uid: Option<u32> = match &user {
-            Some((uid, _)) => Some(
-                uid.parse::<u32>()
-                    .map_err(|_| anyhow!("Invalid uid {}", uid))?,
-            ),
-            None => None,
-        };
-        #[cfg(target_os = "linux")]
-        if let Some(uid) = cm_uid {
-            if let Ok(s) = crate::ipc::connect_for_uid(1000, uid, "_cm").await {
-                stream = Some(s);
-            }
-        }
-        if stream.is_none() {
-            let run_done;
-            if crate::platform::is_root() {
-                let mut res = Ok(None);
-                for _ in 0..10 {
-                    #[cfg(not(any(target_os = "linux")))]
-                    {
-                        log::debug!("Start cm");
-                        res = crate::platform::run_as_user(args.clone());
-                    }
-                    #[cfg(target_os = "linux")]
-                    {
-                        log::debug!("Start cm");
-                        res = crate::platform::run_as_user(
-                            args.clone(),
-                            user.clone(),
-                            None::<(&str, &str)>,
-                        );
-                    }
-                    if res.is_ok() {
-                        break;
-                    }
-                    log::error!("Failed to run cm: {res:?}");
-                    sleep(1.).await;
-                }
-                if let Some(task) = res? {
-                    super::CHILD_PROCESS.lock().unwrap().push(task);
-                }
-                run_done = true;
-            } else {
-                run_done = false;
-            }
-            if !run_done {
-                log::debug!("Start cm");
-                super::CHILD_PROCESS
-                    .lock()
-                    .unwrap()
-                    .push(crate::run_me(args)?);
-            }
-            for _ in 0..20 {
-                sleep(0.3).await;
-                #[cfg(target_os = "linux")]
-                {
-                    if let Some(uid) = cm_uid {
-                        if let Ok(s) = crate::ipc::connect_for_uid(1000, uid, "_cm").await {
-                            stream = Some(s);
-                            break;
-                        }
-                        continue;
-                    }
-                }
-                if let Ok(s) = crate::ipc::connect(1000, "_cm").await {
-                    stream = Some(s);
-                    break;
-                }
-            }
-        }
-    }
-    if stream.is_none() {
-        bail!("Failed to connect to connection manager");
-    }
-
-    let _res = tx_stream_ready.send(()).await;
-    let mut stream = stream.ok_or(anyhow!("none stream"))?;
-    loop {
-        tokio::select! {
-            res = stream.next() => {
-                match res {
-                    Err(err) => {
-                        return Err(err.into());
-                    }
-                    Ok(Some(data)) => {
-                        match data {
-                            ipc::Data::ClickTime(_)=> {
-                                let ct = CLICK_TIME.load(Ordering::SeqCst);
-                                let data = ipc::Data::ClickTime(ct);
-                                stream.send(&data).await?;
-                            }
-                            // FileBlockFromCM: data is always sent separately via send_raw.
-                            // The data field has #[serde(skip)], so it's empty after deserialization.
-                            // Read the raw data bytes following this message.
-                            //
-                            // Note: Empty data (for empty files) is correctly handled. BytesCodec with
-                            // raw=false adds a length prefix, so next_raw() returns empty BytesMut for
-                            // zero-length frames. This mirrors the WriteBlock pattern below.
-                            ipc::Data::FileBlockFromCM { id, file_num, data: _, compressed, conn_id } => {
-                                let raw_data = stream.next_raw().await?;
-                                tx_from_cm.send(ipc::Data::FileBlockFromCM {
-                                    id,
-                                    file_num,
-                                    data: raw_data.into(),
-                                    compressed,
-                                    conn_id,
-                                })?;
-                            }
-                            _ => {
-                                tx_from_cm.send(data)?;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            res = rx_to_cm.recv() => {
-                match res {
-                    Some(data) => {
-                        if let Data::FS(ipc::FS::WriteBlock{id,
-                            file_num,
-                            data,
-                            compressed}) = data {
-                                stream.send(&Data::FS(ipc::FS::WriteBlock{id, file_num, data: Bytes::new(), compressed})).await?;
-                                stream.send_raw(data).await?;
-                        } else {
-                            stream.send(&data).await?;
-                        }
-                    }
-                    None => {
-                        bail!("expected");
-                    }
-                }
-            }
-        }
-    }
 }
 
 // in case screen is sleep and blank, here to activate it

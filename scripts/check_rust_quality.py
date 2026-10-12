@@ -4,6 +4,10 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = (
+    "src/ipc/input_client.rs",
+    "src/server/connection/queue.rs",
+    "src/server/connection/ipc_bridge.rs",
+    "src/server/uinput_client.rs",
     "src/lan_protocol.rs",
     "src/lan_mdns.rs",
     "src/lan_identity.rs",

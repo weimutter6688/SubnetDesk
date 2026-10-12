@@ -63,6 +63,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stalled_tcp_candidate_is_cancelled_and_the_fallback_can_reconnect() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::{TcpListener, TcpStream},
+        };
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let slow = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let fast = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let slow_address = slow.local_addr().unwrap().to_string();
+            let fast_address = fast.local_addr().unwrap().to_string();
+            let slow_server = tokio::spawn(async move {
+                let (mut socket, _) = slow.accept().await.unwrap();
+                // EOF proves that cancellation closes the unsuccessful socket.
+                assert_eq!(socket.read(&mut [0; 1]).await.unwrap(), 0);
+            });
+            let fast_server = tokio::spawn(async move {
+                for _ in 0..2 {
+                    let (mut socket, _) = fast.accept().await.unwrap();
+                    socket.write_all(b"ready").await.unwrap();
+                }
+            });
+            for candidates in [
+                vec![slow_address, fast_address.clone()],
+                vec![fast_address.clone()],
+            ] {
+                let (winner, socket) = race_candidates(candidates, |address| async move {
+                    let mut socket = TcpStream::connect(&address).await?;
+                    let mut greeting = [0; 5];
+                    socket.read_exact(&mut greeting).await?;
+                    if &greeting != b"ready" {
+                        return Err(anyhow!("invalid greeting"));
+                    }
+                    Ok((address, socket))
+                })
+                .await
+                .unwrap();
+                assert_eq!(winner, fast_address);
+                drop(socket);
+            }
+            slow_server.await.unwrap();
+            fast_server.await.unwrap();
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn stale_address_does_not_delay_healthy_fallback_and_loser_is_cancelled() {
         let active = Arc::new(AtomicUsize::new(0));
         let start = Instant::now();

@@ -824,6 +824,28 @@ mod tests {
     }
 
     #[test]
+    fn routed_device_can_reappear_at_a_new_address_after_discovery_expires() {
+        let fingerprint = "d".repeat(64);
+        let recent = config::RecentLanEndpoint {
+            endpoint: "10.8.0.15:21118".into(), fingerprint: fingerprint.clone(), ..Default::default()
+        };
+        let mut peer = config::DiscoveryPeer {
+            id: "192.168.2.30:21118".into(), endpoint: "192.168.2.30:21118".into(),
+            fingerprint: fingerprint.clone(), ..Default::default()
+        };
+        peer.mark_seen(100_000);
+        assert_eq!(peer.online_state(131_000), None);
+        peer.mark_seen(132_000);
+        let peers = [peer];
+        assert_eq!(find_discovered_peer(&peers, &fingerprint, &recent.endpoint)
+            .and_then(|peer| peer.online_state(132_001)), Some(true));
+        let (identity, addresses) = connection_candidates_from(&recent.endpoint, std::slice::from_ref(&recent), &peers);
+        assert_eq!(identity, Some(fingerprint));
+        assert_eq!(addresses, ["10.8.0.15:21118", "192.168.2.30:21118"]);
+        assert!(find_discovered_peer(&peers, &"e".repeat(64), &peers[0].endpoint).is_none());
+    }
+
+    #[test]
     fn discovery_presence_follows_identity_not_reassigned_address() {
         let peers = vec![config::DiscoveryPeer {
             id: "192.168.1.22:21118".to_owned(),

@@ -299,6 +299,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn interrupted_handshake_can_reconnect_with_the_same_device_identity() {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            hbb_common::sodiumoxide::init().unwrap();
+            let (public, secret) = sign::gen_keypair();
+            let expected = fingerprint(&public.0);
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (interrupted, _) = listener.accept().await.unwrap();
+                drop(interrupted);
+                let (socket, _) = listener.accept().await.unwrap();
+                let local = socket.local_addr().unwrap();
+                let mut stream = Stream::from(socket, local);
+                server_handshake_with_identity(&mut stream, &secret, &public)
+                    .await
+                    .unwrap();
+                let bytes = stream.next().await.unwrap().unwrap();
+                let message = Message::parse_from_bytes(&bytes).unwrap();
+                stream.send(&message).await.unwrap();
+            });
+            let first = TcpStream::connect(address).await.unwrap();
+            let local = first.local_addr().unwrap();
+            let mut first = Stream::from(first, local);
+            assert!(client_handshake(&mut first).await.is_err());
+            drop(first);
+            let second = TcpStream::connect(address).await.unwrap();
+            let local = second.local_addr().unwrap();
+            let mut second = Stream::from(second, local);
+            assert_eq!(
+                client_handshake(&mut second).await.unwrap().fingerprint,
+                expected
+            );
+            assert!(second.is_secured());
+            let mut misc = Misc::new();
+            misc.set_chat_message(ChatMessage {
+                text: "reconnected".into(),
+                ..Default::default()
+            });
+            let mut message = Message::new();
+            message.set_misc(misc);
+            second.send(&message).await.unwrap();
+            let response = second.next().await.unwrap().unwrap();
+            assert_eq!(Message::parse_from_bytes(&response).unwrap(), message);
+            server.await.unwrap();
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn loopback_handshake_encrypts_application_payload() {
         let _ = hbb_common::sodiumoxide::init();
         let (device_public_key, device_secret_key) = sign::gen_keypair();

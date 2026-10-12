@@ -474,8 +474,8 @@ impl<T: InvokeUiSession> Remote<T> {
             // But it' not necessary for now, because it's not a common case.
             // And it is immediately known when the input device is changed.
             crate::audio_service::set_voice_call_input_device(get_default_sound_input(), false);
-            let (tx_audio_data, mut rx_audio_data) =
-                hbb_common::tokio::sync::mpsc::unbounded_channel();
+            let queue_failure = crate::server::QueueFailure::default();
+            let (tx_audio_data, mut rx_audio_data) = crate::server::message_channel(&queue_failure);
             // Create a stand-alone inner, add subscribe to audio service
             let conn_id = CLIENT_SERVER.write().unwrap().get_new_id();
             let client_conn_inner = ConnInner::new(conn_id, Some(tx_audio_data), None);
@@ -491,6 +491,10 @@ impl<T: InvokeUiSession> Remote<T> {
                     let data = tokio::select! {
                         biased;
                         _ = &mut rx => break,
+                        _ = queue_failure.wait() => {
+                            log::warn!("Voice call stopped: outgoing queue exceeded its budget");
+                            break;
+                        },
                         data = rx_audio_data.recv() => data,
                     };
                     let Some((_instant, message)) = data else {
