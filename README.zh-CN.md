@@ -237,11 +237,7 @@ cd SubnetDesk
 </p>
 
 <p align="center">
-  欢迎加入 <a href="https://discord.gg/MFZG478wPQ">SubnetDesk Discord 交流社区</a>。也可以扫描下方二维码添加我的微信，备注 <strong>SubnetDesk</strong>，我会拉你进入微信交流群。
-</p>
-
-<p align="center">
-  <img src="assets/community/wechat-contact.jpg" alt="添加 czb 微信，加入 SubnetDesk 交流群" width="360">
+  欢迎加入 <a href="https://discord.gg/MFZG478wPQ">SubnetDesk Discord 交流社区</a>。
 </p>
 
 ## 🙏 致谢与许可

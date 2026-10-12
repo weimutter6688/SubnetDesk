@@ -258,11 +258,7 @@ Bug reports, feature ideas, and pull requests are welcome. Before opening a chan
 </p>
 
 <p align="center">
-  Join the <a href="https://discord.gg/MFZG478wPQ">SubnetDesk Discord community</a>, or scan the QR code below to add me on WeChat. Mention <strong>SubnetDesk</strong>, and I will invite you to the WeChat group.
-</p>
-
-<p align="center">
-  <img src="assets/community/wechat-contact.jpg" alt="Add czb on WeChat to join the SubnetDesk community group" width="360">
+  Join the <a href="https://discord.gg/MFZG478wPQ">SubnetDesk Discord community</a>.
 </p>
 
 ## 🙏 Credits and license
