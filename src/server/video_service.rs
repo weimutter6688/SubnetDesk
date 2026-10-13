@@ -454,7 +454,7 @@ struct ViewerEncoder {
     spf: Duration,
     pending: Option<Instant>,
     pacer: Pacer,
-    capture_ms: u32,
+    capture_time: Duration,
     second: Instant,
     count: usize,
     failures: usize,
@@ -488,7 +488,7 @@ impl ViewerEncoder {
 fn send_cached_frames(
     display: usize, sp: &GenericService, viewers: &mut HashMap<i32, ViewerEncoder>,
     cache: &mut FrameCache, ms: i64, recorder: &Arc<Mutex<Option<Recorder>>>,
-    record_owner: Option<i32>, capture_ms: u32, capture_started: Instant,
+    record_owner: Option<i32>, capture_time: Duration, capture_started: Instant,
 ) -> ResultType<()> {
     if viewers.values().any(|v| v.ready_at(capture_started) && !v.input_texture()) {
         cache.ensure_pixels()?;
@@ -509,6 +509,7 @@ fn send_cached_frames(
                 if let Some(CachedFrame::Texture(texture, rotation)) = &cache.frame {
                     let input = EncodeInput::Texture((texture.as_ptr(), *rotation));
                     let video = encode_frame(input, ms, encoder, &mut viewer.failures, &mut viewer.first_frame)?;
+                    let encode_time = encode_begin.elapsed();
                     if let Some(video) = video {
                         if send_video_frame(display, sp, id, video, recorder, record_owner, viewer.width, viewer.height) {
                             viewer.sent();
@@ -516,8 +517,10 @@ fn send_cached_frames(
                     }
                     let mut registry = VIDEO_QOS.lock().unwrap();
                     let qos = registry.peer(id);
-                    qos.capture_ms = capture_ms;
-                    qos.encode_ms = encode_begin.elapsed().as_millis() as u32;
+                    qos.capture_ms = capture_time.as_millis().min(u32::MAX as u128) as u32;
+                    qos.encode_ms = encode_time.as_millis().min(u32::MAX as u128) as u32;
+                    qos.performance.record(super::video_performance::Stage::Capture, capture_time);
+                    qos.performance.record(super::video_performance::Stage::Encode, encode_time);
                     qos.stream_size = (viewer.width as u32, viewer.height as u32);
                 } else {
                     continue;
@@ -527,7 +530,7 @@ fn send_cached_frames(
             }
         }
         viewer.pacer.start(capture_started);
-        viewer.capture_ms = capture_ms;
+        viewer.capture_time = capture_time;
         viewer.repeat = if new_frame { 0 } else { viewer.repeat + 1 };
         viewer.frame_generation = cache.generation;
     }
@@ -545,7 +548,7 @@ fn drain_encoded_frames(
         };
         match reply {
             Some(PixelReply::Configured(info)) => { viewer.info = Some(info); }
-            Some(PixelReply::Encoded { video, info, elapsed_ms }) => {
+            Some(PixelReply::Encoded { video, info, elapsed_ms, conversion_time, encode_time }) => {
                 viewer.info = Some(info);
                 if let Some(video) = video {
                     if send_video_frame(display, sp, id, video, recorder, record_owner, viewer.width, viewer.height) {
@@ -554,8 +557,15 @@ fn drain_encoded_frames(
                 }
                 let mut registry = VIDEO_QOS.lock().unwrap();
                 let qos = registry.peer(id);
-                qos.capture_ms = viewer.capture_ms;
+                qos.capture_ms = viewer.capture_time.as_millis().min(u32::MAX as u128) as u32;
                 qos.encode_ms = elapsed_ms;
+                qos.performance.record(super::video_performance::Stage::Capture, viewer.capture_time);
+                if let Some(elapsed) = conversion_time {
+                    qos.performance.record(super::video_performance::Stage::Convert, elapsed);
+                }
+                if let Some(elapsed) = encode_time {
+                    qos.performance.record(super::video_performance::Stage::Encode, elapsed);
+                }
                 qos.stream_size = (viewer.width as u32, viewer.height as u32);
             }
             None => {}
@@ -660,7 +670,7 @@ fn prepare_viewers(
             };
             viewers.insert(id, ViewerEncoder {
                 encoder, info, config: cfg, codec: Encoder::negotiated_codec(), use_i444, width, height, ratio, record,
-                spf, pending: None, pacer: Pacer::default(), capture_ms: 0, second: Instant::now(), count: 0, failures: 0,
+                spf, pending: None, pacer: Pacer::default(), capture_time: Duration::ZERO, second: Instant::now(), count: 0, failures: 0,
                 first_frame: true, repeat: 0, frame_generation: 0,
             });
             sp.set_option_bool(&refresh, false);
@@ -751,7 +761,7 @@ fn run_inner(vs: VideoService) -> ResultType<()> {
     let mut record_owner = None;
     let mut viewers: HashMap<i32, ViewerEncoder> = HashMap::new();
     let mut latest_frame = FrameCache::default();
-    let mut capture_ms = 0;
+    let mut capture_time = Duration::ZERO;
     let mut texture_mode = false;
     let mut capture_pacer = Pacer::default();
     sp.set_option_bool(OPTION_REFRESH, false);
@@ -848,7 +858,7 @@ fn run_inner(vs: VideoService) -> ResultType<()> {
         vs.watchdog.checkpoint(Phase::Capturing);
         let res = match c.frame(spf) {
             Ok(frame) => {
-                capture_ms = capture_begin.elapsed().as_millis() as u32;
+                capture_time = capture_begin.elapsed();
                 last_frame = Instant::now();
                 if frame.valid() {
                     let screenshot_key = (vs.source, display_idx);
@@ -901,7 +911,7 @@ fn run_inner(vs: VideoService) -> ResultType<()> {
                     latest_frame.update(&frame)?;
                     vs.watchdog.checkpoint(Phase::Encoding);
                     send_cached_frames(display_idx, &sp, &mut viewers, &mut latest_frame, ms,
-                        &recorder, record_owner, capture_ms, capture_begin)?;
+                        &recorder, record_owner, capture_time, capture_begin)?;
                 }
                 #[cfg(windows)]
                 {
@@ -952,7 +962,7 @@ fn run_inner(vs: VideoService) -> ResultType<()> {
                 }
                 vs.watchdog.checkpoint(Phase::Encoding);
                 send_cached_frames(display_idx, &sp, &mut viewers, &mut latest_frame, ms,
-                    &recorder, record_owner, capture_ms, capture_begin)?;
+                    &recorder, record_owner, capture_time, capture_begin)?;
             }
             Err(err) => {
                 // This check may be redundant, but it is better to be safe.
@@ -1468,7 +1478,7 @@ mod tests {
                 info: None, config,
                 codec: CodecFormat::VP9, use_i444: false, width: 64, height: 64,
                 ratio: 0.5, record: false, spf: Duration::ZERO,
-                pending: None, pacer: Pacer::default(), capture_ms: 0, second: Instant::now(), count: 0,
+                pending: None, pacer: Pacer::default(), capture_time: Duration::ZERO, second: Instant::now(), count: 0,
                 failures: 0, first_frame: true, repeat: 0, frame_generation: 0,
             }
         }
@@ -1484,7 +1494,7 @@ mod tests {
         let mut cache = FrameCache::default();
         let mut pixels = Pixels(vec![0; 64 * 64 * 4]);
         cache.update_pixels(&pixels);
-        send_cached_frames(display, &sp, &mut viewers, &mut cache, 0, &recorder, None, 0, Instant::now()).unwrap();
+        send_cached_frames(display, &sp, &mut viewers, &mut cache, 0, &recorder, None, Duration::ZERO, Instant::now()).unwrap();
         finish_encoding(display, &sp, &mut viewers, &recorder);
         fast_rx.try_recv().unwrap();
         slow_rx.try_recv().unwrap();
@@ -1495,7 +1505,7 @@ mod tests {
             drain_frame_acks(display, &mut viewers);
             pixels.0.fill(value);
             cache.update_pixels(&pixels);
-            send_cached_frames(display, &sp, &mut viewers, &mut cache, value as _, &recorder, None, 0, Instant::now()).unwrap();
+            send_cached_frames(display, &sp, &mut viewers, &mut cache, value as _, &recorder, None, Duration::ZERO, Instant::now()).unwrap();
             finish_encoding(display, &sp, &mut viewers, &recorder);
             fast_rx.try_recv().unwrap();
             assert!(slow_rx.try_recv().is_err());
@@ -1507,7 +1517,7 @@ mod tests {
         notify_video_frame_fetched(display, -101, None);
         notify_video_frame_fetched(display, -102, None);
         drain_frame_acks(display, &mut viewers);
-        send_cached_frames(display, &sp, &mut viewers, &mut cache, 200, &recorder, None, 0, Instant::now()).unwrap();
+        send_cached_frames(display, &sp, &mut viewers, &mut cache, 200, &recorder, None, Duration::ZERO, Instant::now()).unwrap();
         finish_encoding(display, &sp, &mut viewers, &recorder);
         assert!(fast_rx.try_recv().is_err());
         let (_, msg) = slow_rx.try_recv().unwrap();
@@ -1519,7 +1529,7 @@ mod tests {
         notify_video_frame_fetched(display, -102, None);
         viewers.insert(-102, viewer());
         finish_encoding(display, &sp, &mut viewers, &recorder);
-        send_cached_frames(display, &sp, &mut viewers, &mut cache, 250, &recorder, None, 0, Instant::now()).unwrap();
+        send_cached_frames(display, &sp, &mut viewers, &mut cache, 250, &recorder, None, Duration::ZERO, Instant::now()).unwrap();
         finish_encoding(display, &sp, &mut viewers, &recorder);
         slow_rx.try_recv().unwrap();
         for id in [-101, -102] {

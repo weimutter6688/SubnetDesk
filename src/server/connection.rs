@@ -475,20 +475,58 @@ const MILLI1: Duration = Duration::from_millis(1);
 const SEND_TIMEOUT_VIDEO: u64 = 12_000;
 const SEND_TIMEOUT_OTHER: u64 = SEND_TIMEOUT_VIDEO * 10;
 
+struct PendingSend {
+    queued_at: Instant,
+    display: Option<usize>,
+    timing: Option<SendTiming>,
+}
+
+struct SendTiming {
+    queue_wait: Duration,
+    preparation: hbb_common::tcp::QueueTimings,
+    flush_started: Instant,
+}
+
 async fn queue_outgoing(
     stream: &mut Stream,
-    pending: &mut Option<(Instant, Option<usize>)>,
+    pending: &mut Option<PendingSend>,
     message: &Message,
     queued_at: Instant,
 ) -> ResultType<()> {
     if pending.is_some() { bail!("An outgoing message is still in flight"); }
-    stream.queue_message(message).await?;
     let display = match &message.union {
         Some(message::Union::VideoFrame(frame)) => Some(frame.display as usize),
         _ => None,
     };
-    *pending = Some((queued_at, display));
+    let timing = if display.is_some() && super::video_performance::enabled() {
+        let queue_wait = queued_at.elapsed();
+        let preparation = stream.queue_message_timed(message).await?;
+        Some(SendTiming { queue_wait, preparation, flush_started: Instant::now() })
+    } else {
+        stream.queue_message(message).await?;
+        None
+    };
+    *pending = Some(PendingSend { queued_at, display, timing });
     Ok(())
+}
+
+fn record_video_send(id: i32, timing: SendTiming, flushed_at: Instant) {
+    use super::video_performance::Stage;
+    let report = {
+        let mut registry = video_service::VIDEO_QOS.lock().unwrap();
+        let performance = &mut registry.peer(id).performance;
+        performance.record(Stage::Queue, timing.queue_wait);
+        performance.record(Stage::Serialize, timing.preparation.serialize);
+        if let Some(elapsed) = timing.preparation.encrypt { performance.record(Stage::Encrypt, elapsed); }
+        performance.record(Stage::Feed, timing.preparation.feed);
+        // Includes select-loop scheduling/read handling while flushing; not a
+        // remote ACK, and not solely socket write CPU time.
+        performance.record(Stage::Flush, flushed_at.saturating_duration_since(timing.flush_started));
+        performance.frame_flushed(timing.preparation.wire_bytes, flushed_at.into())
+    };
+    if let Some(report) = report {
+        log::debug!(target: super::video_performance::LOG_TARGET, "Video performance peer={id} {report}");
+    }
 }
 const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -649,7 +687,7 @@ impl Connection {
         std::thread::spawn(move || Self::handle_input(_rx_input, tx_cloned));
         // Both video and ordinary messages must flush alongside incoming input.
         // The display is set only for video, so other messages cannot ACK it.
-        let mut pending_send: Option<(Instant, Option<usize>)> = None;
+        let mut pending_send: Option<PendingSend> = None;
         let mut second_timer = crate::rustdesk_interval(time::interval(Duration::from_secs(1)));
         let authentication_deadline = time::sleep(Duration::from_secs(120));
         tokio::pin!(authentication_deadline);
@@ -823,9 +861,16 @@ impl Connection {
                                 conn.on_close(&err.to_string(), false).await;
                                 break;
                             }
-                            if let Some((instant, Some(display))) = pending_send.take() {
-                                if !conn.video_ack_required {
-                                    video_service::notify_video_frame_fetched(display, id, Some(instant.into()));
+                            if let Some(pending) = pending_send.take() {
+                                let flushed_at = pending.timing.as_ref().map(|_| Instant::now());
+                                if let Some(display) = pending.display {
+                                    if !conn.video_ack_required {
+                                        video_service::notify_video_frame_fetched(display, id, Some(pending.queued_at.into()));
+                                    }
+                                }
+                                // Release frame backpressure before formatting/writing diagnostics.
+                                if let (Some(timing), Some(flushed_at)) = (pending.timing, flushed_at) {
+                                    record_video_send(id, timing, flushed_at);
                                 }
                             }
                             continue;
@@ -946,7 +991,7 @@ impl Connection {
                     }
                 },
                 _ = second_timer.tick() => {
-                    if pending_send.as_ref().map_or(false, |(t, _)| t.elapsed().as_millis() >= send_timeout as u128) {
+                    if pending_send.as_ref().map_or(false, |pending| pending.queued_at.elapsed().as_millis() >= send_timeout as u128) {
                         conn.on_close("Message send timeout", true).await;
                         break;
                     }
@@ -992,8 +1037,8 @@ impl Connection {
                         conn.send(msg_out.into()).await;
                     }
                     if conn.is_authed_remote_conn() || conn.view_camera {
-                        if let Some((instant, _)) = pending_send.as_ref() {
-                            video_service::VIDEO_QOS.lock().unwrap().user_delay_response_elapsed(id, instant.elapsed().as_millis());
+                        if let Some(pending) = pending_send.as_ref() {
+                            video_service::VIDEO_QOS.lock().unwrap().user_delay_response_elapsed(id, pending.queued_at.elapsed().as_millis());
                         }
                         if let Some(last_test_delay) = conn.last_test_delay {
                             video_service::VIDEO_QOS.lock().unwrap().user_delay_response_elapsed(id, last_test_delay.elapsed().as_millis());
@@ -5584,6 +5629,40 @@ mod test {
     use super::*;
 
     #[tokio::test]
+    async fn timed_and_untimed_sends_preserve_payload_and_encryption_order() {
+        use hbb_common::tcp::{EndpointRole, FramedStream, StreamEvent};
+        tokio::time::timeout(Duration::from_secs(5), async {
+            for secured in [false, true] {
+                let (a, b) = tokio::io::duplex(64);
+                let address = "127.0.0.1:21118".parse().unwrap();
+                let mut server = Stream::from_framed(FramedStream::from(a, address));
+                let mut client = FramedStream::from(b, address);
+                if secured {
+                    let key = hbb_common::sodiumoxide::crypto::secretbox::Key([9; 32]);
+                    server.set_key(key.clone(), EndpointRole::Server);
+                    client.set_key(key, EndpointRole::Client);
+                }
+                for timed in [false, true, false, true] {
+                    let mut message = Message::new();
+                    message.set_clipboard(Clipboard { content: vec![17; 65536].into(), ..Default::default() });
+                    if timed {
+                        let timings = server.queue_message_timed(&message).await.unwrap();
+                        let payload_len = message.write_to_bytes().unwrap().len();
+                        let overhead = if secured { hbb_common::sodiumoxide::crypto::secretbox::MACBYTES } else { 0 };
+                        assert_eq!(timings.wire_bytes, payload_len + overhead);
+                        assert_eq!(timings.encrypt.is_some(), secured);
+                    } else {
+                        server.queue_message(&message).await.unwrap();
+                    }
+                    let (flushed, received) = tokio::join!(server.next_or_flush(true), client.next());
+                    assert!(matches!(flushed, StreamEvent::Flushed(Ok(()))));
+                    assert_eq!(Message::parse_from_bytes(&received.unwrap().unwrap()).unwrap(), message);
+                }
+            }
+        }).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn clipboard_backpressure_preserves_input_encryption_and_video_ack_scope() {
         use hbb_common::tcp::{FramedStream, StreamEvent};
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -5604,7 +5683,7 @@ mod test {
                 }
                 let mut pending = None;
                 queue_outgoing(&mut server, &mut pending, &message, Instant::now()).await.unwrap();
-                assert!(pending.as_ref().unwrap().1.is_none(), "clipboard cannot acknowledge video");
+                assert!(pending.as_ref().unwrap().display.is_none(), "clipboard cannot acknowledge video");
                 // Reject a second frame before touching the encryption sequence.
                 assert!(queue_outgoing(&mut server, &mut pending, &message, Instant::now()).await.is_err());
                 let mut input = Message::new();
@@ -5621,7 +5700,7 @@ mod test {
                 let mut video = Message::new();
                 video.set_video_frame(VideoFrame { display: 7, ..Default::default() });
                 queue_outgoing(&mut server, &mut pending, &video, Instant::now()).await.unwrap();
-                assert_eq!(pending.as_ref().unwrap().1, Some(7));
+                assert_eq!(pending.as_ref().unwrap().display, Some(7));
                 let (flushed, received) = tokio::join!(server.next_or_flush(true), client.next());
                 assert!(matches!(flushed, StreamEvent::Flushed(Ok(()))));
                 assert_eq!(Message::parse_from_bytes(&received.unwrap().unwrap()).unwrap(), video);

@@ -23,6 +23,7 @@ fn weak_network_report() {
         qos.new_display("simulation".into());
         qos.set_support_changing_quality("simulation", true);
         qos.new_user_instant = Instant::now() - Duration::from_secs(2);
+        let simulation_start = Instant::now();
         let mut rng = 17u64;
         let mut network_queue = 0.0f64;
         let mut decode_queue = 0.0f64;
@@ -58,7 +59,7 @@ fn weak_network_report() {
                 rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
                 let noise = (rng >> 32) as u32 % (jitter * 2 + 1);
                 let delay = rtt + noise + (network_queue * 8.0 / (mbps * 1000.0)) as u32;
-                qos.user_network_delay(1, delay);
+                qos.user_network_delay_at(1, delay, simulation_start + Duration::from_millis(tick as u64 * 10));
                 qos.user_auto_adjust_fps(1, decode_fps);
                 qos.adjust_ratio(true);
                 input_rtt.push(delay as f64);

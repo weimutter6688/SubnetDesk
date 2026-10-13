@@ -69,6 +69,8 @@ pub(super) enum Reply {
         video: Option<VideoFrame>,
         info: EncoderInfo,
         elapsed_ms: u32,
+        conversion_time: Option<Duration>,
+        encode_time: Option<Duration>,
     },
 }
 
@@ -94,11 +96,13 @@ impl State {
         ratio: f32,
     ) -> ResultType<Reply> {
         let started = Instant::now();
+        let timed = super::super::video_performance::enabled();
         if self.ratio != ratio && self.encoder.support_changing_quality() {
             self.encoder.set_quality(ratio)?;
             self.ratio = ratio;
         }
-        if self.generation != Some(generation) {
+        let conversion_time = if self.generation != Some(generation) {
+            let conversion_started = timed.then(Instant::now);
             scrap::scaled_to_yuv(
                 pixels,
                 self.width,
@@ -109,7 +113,9 @@ impl State {
                 &mut self.scaled,
             )?;
             self.generation = Some(generation);
-        }
+            conversion_started.map(|start| start.elapsed())
+        } else { None };
+        let encode_started = timed.then(Instant::now);
         let video = encode_frame(
             EncodeInput::YUV(&self.yuv),
             ms,
@@ -117,10 +123,13 @@ impl State {
             &mut self.failures,
             &mut self.first,
         )?;
+        let encode_time = encode_started.map(|start| start.elapsed());
         Ok(Reply::Encoded {
             video,
             info: EncoderInfo::new(&self.encoder),
             elapsed_ms: started.elapsed().as_millis() as u32,
+            conversion_time,
+            encode_time,
         })
     }
 }

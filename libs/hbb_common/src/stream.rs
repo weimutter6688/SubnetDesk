@@ -54,6 +54,10 @@ impl Stream {
         self.0.queue_message(msg).await
     }
 
+    pub async fn queue_message_timed(&mut self, msg: &impl protobuf::Message) -> ResultType<tcp::QueueTimings> {
+        self.0.queue_message_timed(msg).await
+    }
+
     pub async fn next_or_flush(&mut self, flushing: bool) -> tcp::StreamEvent {
         self.0.next_or_flush(flushing).await
     }

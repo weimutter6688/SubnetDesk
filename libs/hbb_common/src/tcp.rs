@@ -13,6 +13,7 @@ use std::{
     ops::{Deref, DerefMut},
     pin::Pin,
     task::{Context, Poll},
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
@@ -49,6 +50,15 @@ pub struct FramedStream(
 pub enum StreamEvent {
     Received(Option<Result<BytesMut, Error>>),
     Flushed(Result<(), Error>),
+}
+
+/// Local preparation costs; none of these timings measures remote delivery.
+#[derive(Default)]
+pub struct QueueTimings {
+    pub serialize: Duration,
+    pub encrypt: Option<Duration>,
+    pub feed: Duration,
+    pub wire_bytes: usize,
 }
 
 impl Deref for FramedStream {
@@ -174,9 +184,36 @@ impl FramedStream {
     /// Queue one frame, then drive its flush alongside reads with next_or_flush.
     /// The caller must not queue another frame until the first has flushed.
     pub async fn queue_message(&mut self, msg: &impl Message) -> ResultType<()> {
+        self.queue_message_inner(msg, None).await
+    }
+
+    pub async fn queue_message_timed(&mut self, msg: &impl Message) -> ResultType<QueueTimings> {
+        let mut timings = QueueTimings::default();
+        self.queue_message_inner(msg, Some(&mut timings)).await?;
+        Ok(timings)
+    }
+
+    async fn queue_message_inner(
+        &mut self, msg: &impl Message, mut timings: Option<&mut QueueTimings>,
+    ) -> ResultType<()> {
+        let start = timings.as_ref().map(|_| Instant::now());
         let mut bytes = msg.write_to_bytes()?;
-        if let Some(key) = self.2.as_mut() { bytes = key.enc(&bytes)?; }
+        if let (Some(timings), Some(start)) = (timings.as_mut(), start) {
+            timings.serialize = start.elapsed();
+        }
+        if let Some(key) = self.2.as_mut() {
+            let start = timings.as_ref().map(|_| Instant::now());
+            bytes = key.enc(&bytes)?;
+            if let (Some(timings), Some(start)) = (timings.as_mut(), start) {
+                timings.encrypt = Some(start.elapsed());
+            }
+        }
+        if let Some(timings) = timings.as_mut() { timings.wire_bytes = bytes.len(); }
+        let start = timings.as_ref().map(|_| Instant::now());
         self.0.feed(Bytes::from(bytes)).await?;
+        if let (Some(timings), Some(start)) = (timings, start) {
+            timings.feed = start.elapsed();
+        }
         Ok(())
     }
 

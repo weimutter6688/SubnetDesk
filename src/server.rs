@@ -74,6 +74,7 @@ mod login_failure_check;
 #[cfg(windows)]
 pub mod portable_service;
 mod service;
+mod video_performance;
 mod video_qos;
 pub mod video_service;
 
