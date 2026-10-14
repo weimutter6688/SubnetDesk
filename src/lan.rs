@@ -739,12 +739,24 @@ fn discovery_key(peer: &config::DiscoveryPeer) -> String {
     }
 }
 
+/// UI hook for "peer lists changed". The UI layer registers it at start-up, so
+/// discovery (core) never calls into a UI/FFI module directly.
+static PEERS_CHANGED_HANDLER: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Registers the handler once; later registrations are ignored.
+#[cfg_attr(
+    not(any(feature = "flutter", target_os = "android", target_os = "ios")),
+    allow(dead_code)
+)]
+pub(crate) fn set_peers_changed_handler(handler: fn()) {
+    if PEERS_CHANGED_HANDLER.set(handler).is_err() {
+        log::debug!("LAN peers-changed handler already registered");
+    }
+}
+
 fn publish_discovery() {
-    #[cfg(any(feature = "flutter", target_os = "android", target_os = "ios"))]
-    {
-        crate::flutter_ffi::main_load_lan_peers();
-        crate::flutter_ffi::main_load_recent_peers();
-        crate::flutter_ffi::main_load_fav_peers();
+    if let Some(handler) = PEERS_CHANGED_HANDLER.get() {
+        handler();
     }
 }
 
@@ -1023,5 +1035,20 @@ mod tests {
         // After the interval, stale entries are evicted and replies resume.
         assert!(limiter.allow(c, start + Duration::from_secs(2)));
         assert!(limiter.allow(a, start + Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn publish_discovery_calls_the_registered_handler() {
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        fn handler() {
+            CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        set_peers_changed_handler(handler);
+        let before = CALLS.load(std::sync::atomic::Ordering::SeqCst);
+        publish_discovery();
+        // Another test binary component may have registered first; only assert when ours won.
+        if PEERS_CHANGED_HANDLER.get().copied() == Some(handler as fn()) {
+            assert_eq!(CALLS.load(std::sync::atomic::Ordering::SeqCst), before + 1);
+        }
     }
 }
