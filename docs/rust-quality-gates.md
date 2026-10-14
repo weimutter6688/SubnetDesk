@@ -18,8 +18,7 @@ warning-free. Extend the owned list when adding a new fork module.
 Tests that manipulate real cursors, screen resolution or certificates are
 excluded from unattended CI. They need an isolated interactive test machine. The
 unlock-PIN persistence test holds `CONFIG_STATE_TEST_LOCK` and restores the config
-file through `ConfigFileRestoreGuard`, so it is safe to re-enable on an ephemeral
-runner (part of the pending workflow change). Security protocol/authentication/network tests remain
+file through `ConfigFileRestoreGuard`, so it runs again in CI. Security protocol/authentication/network tests remain
 enabled. Existing timed performance-report tests remain explicitly opt-in.
 
 The initial Clippy pass also uncovered a recursive input-parser error formatter
@@ -29,10 +28,9 @@ capture still needs normal interactive desktop verification after installation.
 
 ## Additional gates (2026-10)
 
-The workflow wiring for these gates is in `.github/workflows/ci.yml` and must be
-pushed with a token that has the `workflow` scope; until then they can be run
-locally with the same commands (`cargo audit`, `cargo deny check sources bans`,
-`cargo +nightly fuzz run <target>`).
+These gates run in `.github/workflows/ci.yml` (jobs `supply-chain`, `fuzz-smoke`
+and the Clippy step of `build`); locally use `cargo audit`,
+`cargo deny check sources bans` and `cargo +nightly fuzz run <target>`.
 
 - Inherited code is now also gated on `clippy::correctness` (deny). The one
   exception, `not_unsafe_ptr_arg_deref`, is an inherited X11 FFI wrapper in

@@ -83,6 +83,43 @@ jobs:
         components: rustfmt
     - run: python3 scripts/check_rust_quality.py
 
+  supply-chain:
+    name: Dependency advisories and sources
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+    - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      with:
+        toolchain: stable
+    - name: Install cargo-audit and cargo-deny
+      run: cargo install --locked cargo-audit cargo-deny
+    - name: cargo audit (fails on advisories outside the .cargo/audit.toml baseline)
+      run: cargo audit
+    - name: cargo deny (registry and git sources, bans)
+      run: cargo deny check sources bans
+
+  fuzz-smoke:
+    name: Fuzz smoke (LAN message decoder, endpoint parser)
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+    - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      with:
+        toolchain: nightly
+    - name: Install cargo-fuzz
+      run: cargo install --locked cargo-fuzz
+    - name: Run fuzz targets
+      run: |
+        for target in lan_message_decode lan_endpoint_parse; do
+          cargo +nightly fuzz run "$target" -- -max_total_time=60
+        done
+    - name: Upload crash artifacts
+      if: failure()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: fuzz-artifacts
+        path: fuzz/artifacts
+
   build:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     needs: generate-bridge
@@ -205,8 +242,9 @@ jobs:
         command: build
         args: --locked --features flutter --target=${{ matrix.job.target }}
 
-    - name: Clippy (warnings are errors in fork-owned modules)
-      run: cargo clippy --locked --lib --tests --features flutter --target=${{ matrix.job.target }} -- -A clippy::all
+    - name: Clippy (fork modules deny all lints; inherited code is gated on correctness)
+      # not_unsafe_ptr_arg_deref: inherited libs/scrap/src/x11/server.rs FFI wrapper, tracked separately.
+      run: cargo clippy --locked --lib --tests --features flutter --target=${{ matrix.job.target }} -- -A clippy::all -D clippy::correctness -A clippy::not_unsafe_ptr_arg_deref
 
     - name: clean
       shell: bash
@@ -261,7 +299,7 @@ jobs:
             CARGO_TEST_OPTIONS="--lib --bin ${PROJECT_NAME}"
             ;;
           *)
-            CARGO_TEST_OPTIONS="--workspace --no-fail-fast -- --test-threads=1 --skip test_get_cursor_pos --skip test_cursor_data --skip test_get_key_state --skip test_resolution --skip test_uninstall_cert --skip test_config2_store_keeps_existing_unlock_pin_when_pin_is_unchanged"
+            CARGO_TEST_OPTIONS="--workspace --no-fail-fast -- --test-threads=1 --skip test_get_cursor_pos --skip test_cursor_data --skip test_get_key_state --skip test_resolution --skip test_uninstall_cert"
             ;;
         esac;
 
@@ -276,4 +314,4 @@ jobs:
         args: --locked --features flutter --target=${{ matrix.job.target }} ${{ steps.test-options.outputs.CARGO_TEST_OPTIONS}}
 
     - name: Common library tests
-      run: cargo test --locked -p hbb_common --lib --target=${{ matrix.job.target }} -- --test-threads=1 --skip test_config2_store_keeps_existing_unlock_pin_when_pin_is_unchanged
+      run: cargo test --locked -p hbb_common --lib --target=${{ matrix.job.target }} -- --test-threads=1
