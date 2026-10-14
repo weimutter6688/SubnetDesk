@@ -1,7 +1,7 @@
 # cargo-audit baseline. CI fails on any advisory NOT listed here, so new
 # vulnerabilities block merges while these inherited ones are worked down.
 # Baseline taken 2026-10-14 from Cargo.lock at master 2b6697a. Remove an entry as
-# soon as the dependency is upgraded (2026-10-14: 18 fixed via Cargo.lock bumps); never add one without a tracking note.
+# soon as the dependency is upgraded (2026-10-14: 13 fixed via Cargo.lock bumps); never add one without a tracking note.
 [advisories]
 ignore = [
     "RUSTSEC-2020-0071",  # time 0.1 via fruitbasket (macOS); no 0.1.x fix, needs fruitbasket replacement
@@ -10,5 +10,10 @@ ignore = [
     "RUSTSEC-2026-0009",  # time 0.3.36: fix 0.3.47 needs edition2024 (Rust >=1.85); CI pins 1.82
     "RUSTSEC-2026-0194",  # quick-xml 0.30/0.31/0.37 via tauri-winrt-notification, plist(build), wayland-scanner(build); fix is 0.41 major, upstream crates pin
     "RUSTSEC-2026-0195",  # quick-xml: same as RUSTSEC-2026-0194
+    "RUSTSEC-2026-0341",  # quinn-proto 0.11.15 (affects 0.11.15-0.11.16): fix 0.11.17 pulls rand 0.10 (edition2024)
+    "RUSTSEC-2026-0338",  # quinn-proto 0.11.15: fix 0.11.17+ pulls rand 0.10 (edition2024, Rust >=1.85); not in default feature graph
+    "RUSTSEC-2026-0339",  # quinn-proto 0.11.15: fix 0.11.17+ pulls rand 0.10 (edition2024, Rust >=1.85); not in default feature graph
+    "RUSTSEC-2026-0340",  # quinn-proto 0.11.15: fix 0.11.17+ pulls rand 0.10 (edition2024, Rust >=1.85); not in default feature graph
+    "RUSTSEC-2026-0342",  # quinn-proto 0.11.15: fix 0.11.17+ pulls rand 0.10 (edition2024, Rust >=1.85); not in default feature graph
     "RUSTSEC-2026-0293",  # ringbuf 0.3 (direct): fixed 0.5.2+ needs edition2024 (Rust >=1.85); CI pins 1.82
 ]
