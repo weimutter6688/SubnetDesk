@@ -224,6 +224,28 @@ cd SubnetDesk
 
 构建需要 Rust、Flutter 和对应平台的原生依赖。固定工具版本、目标架构和完整打包步骤以[原生安装包工作流](.github/workflows/flutter-build.yml)为准。
 
+### Linux 构建依赖（Debian/Ubuntu）
+
+Rust 核心需要以下系统包。`libsodium-sys` 会从源码编译 libsodium，所以即使只运行
+`cargo test -p hbb_common` 也需要 autotools：
+
+```bash
+sudo apt-get install -y build-essential autoconf automake libtool pkg-config clang cmake nasm \
+  libgtk-3-dev libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev libxfixes-dev \
+  libasound2-dev libpulse-dev libpam0g-dev libva-dev libvdpau-dev libunwind-dev \
+  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libvpx-dev libaom-dev libopus-dev libyuv-dev
+```
+
+不使用 vcpkg 时，通过 pkg-config 使用系统编解码库。部分发行版（如 Debian）的 `libyuv-dev`
+不带 `libyuv.pc`，构建提示找不到 `libyuv` 时请自行补一个并加入 `PKG_CONFIG_PATH`。
+启用 `flutter` 特性还需要 flutter_rust_bridge 生成的 `src/bridge_generated.rs`，
+由[桥接工作流](.github/workflows/bridge.yml)生成。
+
+```bash
+cargo test --locked -p hbb_common --lib -- --test-threads=1
+cargo check --locked --lib --features flutter,linux-pkg-config   # 先生成桥接代码
+```
+
 ## 🤝 参与贡献
 
 欢迎提交缺陷报告、功能建议和 Pull Request。开始修改前建议先查看现有 [Issues](https://github.com/weimutter6688/SubnetDesk/issues)，并尽量让改动保持聚焦，符合项目面向局域网与 VPN 的产品定位。
