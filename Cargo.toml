@@ -56,6 +56,8 @@ serde_json = "1.0"
 serde_repr = "0.1"
 cfg-if = "1.0"
 lazy_static = "1.4"
+parking_lot = "0.12"
+thiserror = "1.0"
 sha2 = "0.10"
 zeroize = { version = "1.8", features = ["derive"] }
 repng = "0.2"
@@ -214,7 +216,7 @@ android-wakelock = { git = "https://github.com/rustdesk-org/android-wakelock" }
 
 [workspace]
 members = ["libs/scrap", "libs/hbb_common", "libs/enigo", "libs/clipboard", "libs/virtual_display", "libs/virtual_display/dylib", "libs/portable", "libs/remote_printer"]
-exclude = ["vdi/host", "examples/custom_plugin"]
+exclude = ["vdi/host", "examples/custom_plugin", "fuzz"]
 
 # Patch libxdo-sys to use a stub implementation that doesn't require libxdo
 # This allows building and running on systems without libxdo installed (e.g., Wayland-only)

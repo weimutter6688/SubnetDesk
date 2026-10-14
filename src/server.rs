@@ -99,10 +99,11 @@ const CONFIG_SYNC_INTERVAL_SECS: f32 = 0.3;
 const CONFIG_SYNC_INITIAL_WAIT_SECS: u64 = 3;
 
 lazy_static::lazy_static! {
-    static ref PENDING_AUTHENTICATIONS: Arc<tokio::sync::Semaphore> =
-        Arc::new(tokio::sync::Semaphore::new(MAX_PENDING_AUTHENTICATIONS));
-    static ref PENDING_AUTHENTICATIONS_PER_SOURCE: Mutex<HashMap<IpAddr, usize>> =
-        Default::default();
+    static ref PENDING_AUTHENTICATIONS: crate::admission::AdmissionControl =
+        crate::admission::AdmissionControl::new(
+            MAX_PENDING_AUTHENTICATIONS,
+            MAX_PENDING_AUTHENTICATIONS_PER_SOURCE,
+        );
     pub static ref CHILD_PROCESS: Childs = Default::default();
     // A client server used to provide local services(audio, video, clipboard, etc.)
     // for all initiative connections.
@@ -165,7 +166,7 @@ pub async fn create_lan_connection(
     addr: SocketAddr,
     web_client: bool,
 ) -> ResultType<()> {
-    let auth_permit = PendingAuthPermit::try_acquire(addr.ip())?;
+    let auth_permit = try_acquire_pending_auth(addr.ip())?;
     hbb_common::timeout(
         LAN_HANDSHAKE_DEADLINE.as_millis() as u64,
         crate::lan_protocol::server_handshake(&mut stream),
@@ -196,72 +197,13 @@ pub async fn create_lan_connection(
     Ok(())
 }
 
-/// Admission ticket for one unauthenticated connection: a global slot plus a
-/// per-source slot. Both are released together when the ticket is dropped.
-pub struct PendingAuthPermit {
-    source: IpAddr,
-    _global: tokio::sync::OwnedSemaphorePermit,
-}
+/// Admission ticket for one unauthenticated LAN connection (global + per-source slot).
+pub type PendingAuthPermit = crate::admission::Admission;
 
-impl PendingAuthPermit {
-    fn try_acquire(source: IpAddr) -> ResultType<Self> {
-        Self::try_acquire_with(source, MAX_PENDING_AUTHENTICATIONS_PER_SOURCE)
-    }
-
-    fn try_acquire_with(source: IpAddr, per_source_max: usize) -> ResultType<Self> {
-        {
-            let mut sources = PENDING_AUTHENTICATIONS_PER_SOURCE
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let count = sources.entry(source).or_insert(0);
-            if *count >= per_source_max {
-                hbb_common::anyhow::bail!("Too many unauthenticated LAN connections from {source}");
-            }
-            *count += 1;
-        }
-        match PENDING_AUTHENTICATIONS.clone().try_acquire_owned() {
-            Ok(global) => Ok(Self { source, _global: global }),
-            Err(_) => {
-                release_pending_source(source);
-                hbb_common::anyhow::bail!("Too many unauthenticated LAN connections")
-            }
-        }
-    }
-}
-
-fn release_pending_source(source: IpAddr) {
-    let mut sources = PENDING_AUTHENTICATIONS_PER_SOURCE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(count) = sources.get_mut(&source) {
-        *count = count.saturating_sub(1);
-        if *count == 0 {
-            sources.remove(&source);
-        }
-    }
-}
-
-impl Drop for PendingAuthPermit {
-    fn drop(&mut self) {
-        release_pending_source(self.source);
-    }
-}
-
-#[cfg(test)]
-mod pending_auth_permit_tests {
-    use super::*;
-
-    #[test]
-    fn per_source_limit_is_enforced_and_released() {
-        let ip: IpAddr = "192.0.2.77".parse().unwrap();
-        let a = PendingAuthPermit::try_acquire_with(ip, 2).unwrap();
-        let _b = PendingAuthPermit::try_acquire_with(ip, 2).unwrap();
-        assert!(PendingAuthPermit::try_acquire_with(ip, 2).is_err());
-        let other: IpAddr = "192.0.2.78".parse().unwrap();
-        assert!(PendingAuthPermit::try_acquire_with(other, 2).is_ok());
-        drop(a);
-        assert!(PendingAuthPermit::try_acquire_with(ip, 2).is_ok());
-    }
+fn try_acquire_pending_auth(source: IpAddr) -> ResultType<PendingAuthPermit> {
+    PENDING_AUTHENTICATIONS.try_admit(source).map_err(|err| {
+        hbb_common::anyhow::anyhow!("Too many unauthenticated LAN connections: {err}")
+    })
 }
 
 impl Server {

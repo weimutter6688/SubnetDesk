@@ -2,24 +2,20 @@
 
 use std::{
     net::{IpAddr, SocketAddr},
-    str::FromStr,
-    sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
-        Mutex,
-    },
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     time::Duration,
 };
 
-use cidr_utils::cidr::IpCidr;
 use hbb_common::{
     config::{option2bool, Config},
-    lan::DEFAULT_PORT,
     log,
     tcp::{listen_any, new_listener},
     tokio::{self, sync::watch},
     ResultType, Stream,
 };
+use parking_lot::Mutex;
 
+use crate::lan_config::normalize_source_ip;
 #[cfg(not(target_os = "ios"))]
 use crate::server::{new as new_server, ServerPtr};
 
@@ -45,9 +41,7 @@ lazy_static::lazy_static! {
 }
 
 fn set_runtime_status(state: &str, last_error: String) {
-    let mut status = RUNTIME_STATUS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut status = RUNTIME_STATUS.lock();
     status.state = state.to_owned();
     status.last_error = last_error;
 }
@@ -66,10 +60,7 @@ impl LanServer {
     }
 
     pub fn runtime_status() -> LanServerRuntimeStatus {
-        RUNTIME_STATUS
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+        RUNTIME_STATUS.lock().clone()
     }
 
     pub(crate) fn is_discoverable() -> bool {
@@ -134,37 +125,30 @@ impl LanServer {
 }
 
 pub fn normalize_listen_addresses(value: &str) -> ResultType<String> {
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|address| {
-            address
-                .parse::<IpAddr>()
-                .map(|address| address.to_string())
-                .map_err(|_| hbb_common::anyhow::anyhow!("Invalid listen address: {address}"))
+    crate::lan_config::parse_listen_addresses(value)
+        .map(|addresses| {
+            addresses
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
         })
-        .collect::<Result<Vec<_>, _>>()
-        .map(|addresses| addresses.join(","))
+        .map_err(Into::into)
 }
 
 pub fn normalize_allowed_networks(value: &str) -> ResultType<String> {
-    value
+    // The settings UI requires explicit prefixes; bare addresses are rejected here.
+    if let Some(network) = value
         .split(|c: char| c == ',' || c.is_ascii_whitespace())
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|network| {
-            if !network.contains('/') {
-                return Err(hbb_common::anyhow::anyhow!(
-                    "Invalid allowed network: {network}"
-                ));
-            }
-            IpCidr::from_str(network)
-                .map(|network| network.to_string())
-                .map_err(|_| hbb_common::anyhow::anyhow!("Invalid allowed network: {network}"))
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(|networks| networks.join(","))
+        .find(|network| !network.is_empty() && !network.contains('/'))
+    {
+        hbb_common::anyhow::bail!("Invalid allowed network: {network}");
+    }
+    value
+        .parse::<crate::lan_config::AllowedNetworks>()
+        .map(|networks| networks.to_canonical_string())
+        .map_err(Into::into)
 }
 
 fn service_ready() -> bool {
@@ -177,11 +161,7 @@ fn discoverable_state(running: bool, ready: bool) -> bool {
 }
 
 fn listen_port() -> u16 {
-    Config::get_option("lan-listen-port")
-        .parse::<u16>()
-        .ok()
-        .filter(|port| *port > 0)
-        .unwrap_or(DEFAULT_PORT)
+    crate::lan_config::ListenPort::configured().get()
 }
 
 fn listen_addresses() -> Vec<String> {
@@ -236,18 +216,20 @@ async fn bind_listeners(
     server: ServerPtr,
     stop_rx: watch::Receiver<bool>,
 ) -> ResultType<(Vec<tokio::task::JoinHandle<()>>, usize)> {
-    let port = listen_port();
-    let addresses = listen_addresses();
+    // Validate the whole LAN policy up front so a bad value surfaces as a
+    // listener failure in the UI instead of being skipped silently.
+    let config = crate::lan_config::LanConfig::load()?;
+    if config.allowed_networks.is_empty() {
+        log::warn!("LAN allowed networks are empty; every incoming connection will be refused");
+    }
+    let port = config.port.get();
     let mut listeners = Vec::new();
-    if addresses.is_empty() {
+    if config.listen_addresses.is_empty() {
         listeners.push(listen_any(port).await.map_err(|err| {
             hbb_common::anyhow::anyhow!("Failed to listen on port {port}: {err}")
         })?);
     } else {
-        for address in addresses {
-            let ip = IpAddr::from_str(&address).map_err(|_| {
-                hbb_common::anyhow::anyhow!("Invalid LAN listen address: {address}")
-            })?;
+        for ip in config.listen_addresses {
             let endpoint = SocketAddr::new(ip, port);
             listeners.push(new_listener(endpoint, true).await.map_err(|err| {
                 hbb_common::anyhow::anyhow!("Failed to listen on {endpoint}: {err}")
@@ -302,7 +284,13 @@ async fn bind_listeners(
                                 tokio::spawn(async move {
                                     let stream = Stream::from(stream, local_addr);
                                     if let Err(err) = crate::server::create_lan_connection(server, stream, addr, false).await {
-                                        log::warn!("LAN connection from {addr} failed: {err}");
+                                        match crate::lan_protocol::HandshakeError::find(&err) {
+                                            Some(handshake) => log::warn!(
+                                                "LAN handshake from {addr} failed (code {}): {err}",
+                                                handshake.code()
+                                            ),
+                                            None => log::warn!("LAN connection from {addr} failed: {err}"),
+                                        }
                                     }
                                 });
                             }
@@ -320,31 +308,22 @@ async fn bind_listeners(
 }
 
 pub fn source_allowed(ip: IpAddr) -> bool {
-    let configured = Config::get_option("lan-allowed-networks");
-    source_allowed_with(ip, &configured)
+    let configured = Config::get_option(crate::lan_config::OPTION_ALLOWED_NETWORKS);
+    crate::lan_config::cached_allowed_networks(&configured)
+        .map(|networks| networks.contains(ip))
+        .unwrap_or(false)
 }
 
+/// Strict check against an explicit policy string: an unparsable policy denies all.
 pub(crate) fn source_allowed_with(ip: IpAddr, configured: &str) -> bool {
-    let ip = normalize_source_ip(ip);
     configured
-        .split(|c: char| c == ',' || c.is_ascii_whitespace())
-        .filter(|value| !value.is_empty())
-        .filter_map(|value| IpCidr::from_str(value).ok())
-        .any(|network| network.contains(ip))
+        .parse::<crate::lan_config::AllowedNetworks>()
+        .map(|networks| networks.contains(ip))
+        .unwrap_or(false)
 }
 
 fn normalize_source_addr(addr: SocketAddr) -> SocketAddr {
     SocketAddr::new(normalize_source_ip(addr.ip()), addr.port())
-}
-
-fn normalize_source_ip(ip: IpAddr) -> IpAddr {
-    match ip {
-        IpAddr::V6(ipv6) => ipv6
-            .to_ipv4_mapped()
-            .map(IpAddr::V4)
-            .unwrap_or(IpAddr::V6(ipv6)),
-        IpAddr::V4(_) => ip,
-    }
 }
 
 #[cfg(not(target_os = "ios"))]
@@ -429,6 +408,11 @@ mod tests {
         assert!(source_allowed_with(
             "100.81.211.45".parse().unwrap(),
             "192.168.0.0/16\n100.64.0.0/10"
+        ));
+        // One invalid entry denies everything instead of being silently skipped.
+        assert!(!source_allowed_with(
+            "192.168.1.1".parse().unwrap(),
+            "192.168.0.0/16,bogus"
         ));
         assert!(source_allowed_with(
             "fd7a:115c:a1e0::1".parse().unwrap(),

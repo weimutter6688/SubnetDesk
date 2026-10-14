@@ -9,6 +9,8 @@ MODULES = (
     "src/server/connection/ipc_bridge.rs",
     "src/server/uinput_client.rs",
     "src/server/video_performance.rs",
+    "src/admission.rs",
+    "src/lan_config.rs",
     "src/lan_protocol.rs",
     "src/lan_mdns.rs",
     "src/lan_identity.rs",
