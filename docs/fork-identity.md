@@ -38,3 +38,16 @@ login credentials again as needed. Data from .84's temporary naming is not
 migrated automatically. New installations default to manual-address connections
 with discovery disabled, and a disabled Web gateway with view-only permissions
 when explicitly enabled.
+
+## Android package identity
+
+The published Android application ID is `com.subnetdesk.app`
+(`flutter/android/app/build.gradle`, `applicationId`). The Gradle `namespace` and
+the Kotlin source package intentionally remain `com.carriez.flutter_hbb`, because
+every inherited Kotlin file (activities, services, `AndroidManifest.xml` component
+names) lives in that package and renaming it would conflict with each upstream
+merge. The Rust JNI exports are not affected: they bind to the separate `ffi`
+package (`Java_ffi_FFI_*` in `libs/scrap/src/android/ffi.rs`,
+`flutter/android/app/src/main/kotlin/ffi.kt`). The namespace only affects generated
+`R`/`BuildConfig` classes and is not visible to users or app stores. A rename, if
+ever wanted, should move the Kotlin package and manifest component names together.

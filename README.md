@@ -245,6 +245,29 @@ cd SubnetDesk
 
 The build requires Rust, Flutter, and platform-specific native dependencies. The [native package workflow](.github/workflows/flutter-build.yml) is the source of truth for pinned tool versions, target architectures, and packaging steps.
 
+### Linux prerequisites (Debian/Ubuntu)
+
+The Rust core needs these system packages. `libsodium-sys` builds libsodium from
+source, so autotools are required even for `cargo test -p hbb_common`:
+
+```bash
+sudo apt-get install -y build-essential autoconf automake libtool pkg-config clang cmake nasm \
+  libgtk-3-dev libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev libxfixes-dev \
+  libasound2-dev libpulse-dev libpam0g-dev libva-dev libvdpau-dev libunwind-dev \
+  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libvpx-dev libaom-dev libopus-dev libyuv-dev
+```
+
+Without vcpkg, use the system codec libraries through pkg-config. Some distributions
+(for example Debian) ship `libyuv-dev` without `libyuv.pc`; add one to `PKG_CONFIG_PATH`
+if the build reports that `libyuv` cannot be found. The `flutter` feature also needs the
+flutter_rust_bridge output (`src/bridge_generated.rs`), produced by the
+[bridge workflow](.github/workflows/bridge.yml).
+
+```bash
+cargo test --locked -p hbb_common --lib -- --test-threads=1
+cargo check --locked --lib --features flutter,linux-pkg-config   # after generating the bridge
+```
+
 ## 🤝 Contributing
 
 Bug reports, feature ideas, and pull requests are welcome. Before opening a change, check the existing [issues](https://github.com/weimutter6688/SubnetDesk/issues) and keep changes focused on the LAN/VPN-first product scope.
