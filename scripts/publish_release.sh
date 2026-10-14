@@ -15,7 +15,7 @@ export GH_REPO="$GITHUB_REPOSITORY"
 # A manually supplied existing tag must point to the code being packaged.
 remote_tag=$(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}")
 if [[ -n "$remote_tag" && "$tag" != 'nightly' ]]; then
-  git fetch --depth=1 origin "tag" "$tag"
+  git fetch --depth=1 --force origin "tag" "$tag"
   tagged_sha=$(git rev-list -n 1 "$tag")
   if [[ "$tagged_sha" != "$GITHUB_SHA" ]]; then
     echo "Release tag points to a different source commit" >&2
