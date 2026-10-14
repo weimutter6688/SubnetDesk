@@ -118,7 +118,6 @@ lazy_static::lazy_static! {
 pub struct Server {
     connections: ConnMap,
     services: HashMap<String, Box<dyn Service>>,
-    id_count: i32,
 }
 
 pub type ServerPtr = Arc<RwLock<Server>>;
@@ -128,7 +127,6 @@ pub fn new() -> ServerPtr {
     let mut server = Server {
         connections: HashMap::new(),
         services: HashMap::new(),
-        id_count: hbb_common::rand::random::<i32>() % 1000 + 1000, // ensure positive
     };
     server.add_service(Box::new(audio_service::new()));
     #[cfg(not(target_os = "ios"))]
@@ -184,7 +182,8 @@ pub async fn create_lan_connection(
             CHILD_PROCESS.lock().unwrap().push(task);
         }
     }
-    let id = server.write().unwrap().get_new_id();
+    // No Server write lock in async context just to allocate an id.
+    let id = next_connection_id();
     Connection::start(
         addr,
         stream,
@@ -195,6 +194,18 @@ pub async fn create_lan_connection(
     )
     .await;
     Ok(())
+}
+
+/// Process-wide connection ids. Starts at a random positive offset like the
+/// former per-`Server` counter, so ids from different runs are unlikely to repeat.
+fn next_connection_id() -> i32 {
+    static NEXT_ID: std::sync::OnceLock<std::sync::atomic::AtomicI32> = std::sync::OnceLock::new();
+    NEXT_ID
+        .get_or_init(|| {
+            std::sync::atomic::AtomicI32::new(hbb_common::rand::random::<u16>() as i32 % 1000 + 1000)
+        })
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        + 1
 }
 
 /// Admission ticket for one unauthenticated LAN connection (global + per-source slot).
@@ -315,8 +326,7 @@ impl Server {
 
     // get a new unique id
     pub fn get_new_id(&mut self) -> i32 {
-        self.id_count += 1;
-        self.id_count
+        next_connection_id()
     }
 
     pub fn set_video_service_opt(

@@ -246,4 +246,37 @@ mod tests {
             .is_err()
         );
     }
+
+    mod properties {
+        use super::super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn parsing_arbitrary_text_never_panics(value in ".{0,120}") {
+                let _ = value.parse::<AllowedNetworks>();
+            }
+
+            #[test]
+            fn valid_ipv4_networks_round_trip_and_contain_their_base(
+                a: u8, b: u8, c: u8, d: u8, prefix in 0u8..=32
+            ) {
+                let text = format!("{a}.{b}.{c}.{d}/{prefix}");
+                let Ok(networks) = text.parse::<AllowedNetworks>() else {
+                    // Host bits set below the prefix are rejected by cidr-utils; that is fine.
+                    return Ok(());
+                };
+                let canonical = networks.to_canonical_string();
+                let reparsed = canonical.parse::<AllowedNetworks>().unwrap();
+                prop_assert_eq!(reparsed.to_canonical_string(), canonical);
+                prop_assert!(networks.contains(std::net::IpAddr::from([a, b, c, d])));
+            }
+
+            #[test]
+            fn one_bad_entry_rejects_the_whole_list(junk in "[g-z]{1,8}") {
+                let text = format!("10.0.0.0/8,{junk}");
+                prop_assert!(text.parse::<AllowedNetworks>().is_err());
+            }
+        }
+    }
 }

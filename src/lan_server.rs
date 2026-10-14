@@ -6,18 +6,23 @@ use std::{
     time::Duration,
 };
 
+#[cfg(not(target_os = "ios"))]
+use hbb_common::tokio_util::{sync::CancellationToken, task::TaskTracker};
 use hbb_common::{
     config::{option2bool, Config},
     log,
     tcp::{listen_any, new_listener},
-    tokio::{self, sync::watch},
-    ResultType, Stream,
+    tokio, ResultType, Stream,
 };
 use parking_lot::Mutex;
 
 use crate::lan_config::normalize_source_ip;
 #[cfg(not(target_os = "ios"))]
 use crate::server::{new as new_server, ServerPtr};
+
+/// Bound for listener tasks to exit after their token is cancelled.
+#[cfg(not(target_os = "ios"))]
+const LISTENER_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 static RESTART_GENERATION: AtomicU64 = AtomicU64::new(0);
 static ACTIVE_LISTENERS: AtomicUsize = AtomicUsize::new(0);
@@ -34,6 +39,9 @@ pub struct LanServerRuntimeStatus {
 }
 
 lazy_static::lazy_static! {
+    /// Every accepted LAN connection task, across listener restarts.
+    #[cfg(not(target_os = "ios"))]
+    static ref CONNECTION_TASKS: TaskTracker = TaskTracker::new();
     static ref RUNTIME_STATUS: Mutex<LanServerRuntimeStatus> = Mutex::new(LanServerRuntimeStatus {
         state: RUNTIME_STATE_STARTING.to_owned(),
         last_error: String::new(),
@@ -80,9 +88,10 @@ impl LanServer {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
-            let (stop_tx, stop_rx) = watch::channel(false);
+            let cancel = CancellationToken::new();
+            let listeners = TaskTracker::new();
             let (handles, native_listener_count) =
-                match bind_listeners(server.clone(), stop_rx).await {
+                match bind_listeners(server.clone(), cancel.clone(), &listeners).await {
                     Ok(result) => result,
                     Err(err) => {
                         log::error!("Failed to start LAN server: {err}");
@@ -103,9 +112,14 @@ impl LanServer {
                     break;
                 }
             }
-            if stop_tx.send(true).is_err() {
-                log::debug!("LAN listener stop receivers already closed");
-            }
+            // Stop accepting; already-accepted connections keep running and are
+            // tracked separately by CONNECTION_TASKS.
+            cancel.cancel();
+            listeners.close();
+            log::info!(
+                "LAN listeners stopping; {} accepted connection task(s) keep running",
+                Self::active_connection_tasks()
+            );
             ACTIVE_LISTENERS.store(0, Ordering::SeqCst);
             set_runtime_status(
                 if service_ready() {
@@ -115,12 +129,24 @@ impl LanServer {
                 },
                 String::new(),
             );
+            if tokio::time::timeout(LISTENER_STOP_TIMEOUT, listeners.wait())
+                .await
+                .is_err()
+            {
+                log::warn!("LAN listeners did not stop within {LISTENER_STOP_TIMEOUT:?}");
+            }
             for handle in handles {
                 if let Err(err) = handle.await {
-                    log::debug!("LAN listener task ended: {err}");
+                    log::debug!("Web listener task ended: {err}");
                 }
             }
         }
+    }
+
+    /// Accepted LAN connections that are still running (handshake, auth or session).
+    #[cfg(not(target_os = "ios"))]
+    pub fn active_connection_tasks() -> usize {
+        CONNECTION_TASKS.len()
     }
 }
 
@@ -214,7 +240,8 @@ fn listener_signature() -> ListenerSignature {
 #[cfg(not(target_os = "ios"))]
 async fn bind_listeners(
     server: ServerPtr,
-    stop_rx: watch::Receiver<bool>,
+    cancel: CancellationToken,
+    tracker: &TaskTracker,
 ) -> ResultType<(Vec<tokio::task::JoinHandle<()>>, usize)> {
     // Validate the whole LAN policy up front so a bad value surfaces as a
     // listener failure in the UI instead of being skipped silently.
@@ -237,8 +264,19 @@ async fn bind_listeners(
         }
     }
 
+    // The Web gateway still takes a watch receiver; bridge it from the token.
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    let mut handles = match crate::web_gateway::bind(server.clone(), stop_rx.clone()).await {
+    let stop_rx = {
+        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+        let cancelled = cancel.clone();
+        tracker.spawn(async move {
+            cancelled.cancelled().await;
+            let _ = stop_tx.send(true);
+        });
+        stop_rx
+    };
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let handles = match crate::web_gateway::bind(server.clone(), stop_rx).await {
         Ok(handles) => handles,
         Err(err) => {
             log::error!("Failed to start optional Web access: {err}");
@@ -247,21 +285,17 @@ async fn bind_listeners(
         }
     };
     #[cfg(any(target_os = "android", target_os = "ios"))]
-    let mut handles = Vec::new();
+    let handles = Vec::new();
     let native_listener_count = listeners.len();
-    handles.reserve(native_listener_count);
     for listener in listeners {
         let server = server.clone();
-        let mut stop_rx = stop_rx.clone();
+        let cancel = cancel.clone();
         log::info!("LAN server listening on {}", listener.local_addr()?);
-        handles.push(tokio::spawn(async move {
+        tracker.spawn(async move {
             loop {
                 tokio::select! {
-                    changed = stop_rx.changed() => {
-                        if changed.is_err() || *stop_rx.borrow() {
-                            break;
-                        }
-                    }
+                    biased;
+                    _ = cancel.cancelled() => break,
                     accepted = listener.accept() => {
                         match accepted {
                             Ok((stream, addr)) => {
@@ -281,7 +315,7 @@ async fn bind_listeners(
                                     }
                                 };
                                 let server = server.clone();
-                                tokio::spawn(async move {
+                                CONNECTION_TASKS.spawn(async move {
                                     let stream = Stream::from(stream, local_addr);
                                     if let Err(err) = crate::server::create_lan_connection(server, stream, addr, false).await {
                                         match crate::lan_protocol::HandshakeError::find(&err) {
@@ -302,7 +336,7 @@ async fn bind_listeners(
                     }
                 }
             }
-        }));
+        });
     }
     Ok((handles, native_listener_count))
 }
@@ -328,9 +362,17 @@ fn normalize_source_addr(addr: SocketAddr) -> SocketAddr {
 
 #[cfg(not(target_os = "ios"))]
 fn start_auxiliary_services_once() {
+    // Supervise the discovery responder: a bind failure (port briefly in use) or
+    // any other error restarts it with backoff instead of disabling discovery.
     std::thread::spawn(|| {
-        if let Err(err) = crate::lan::start_listening() {
-            log::warn!("LAN discovery stopped: {err}");
+        let mut backoff = Duration::from_secs(1);
+        loop {
+            match crate::lan::start_listening() {
+                Ok(()) => backoff = Duration::from_secs(1),
+                Err(err) => log::warn!("LAN discovery stopped: {err}; restarting in {backoff:?}"),
+            }
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(Duration::from_secs(60));
         }
     });
     #[cfg(target_os = "linux")]

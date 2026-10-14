@@ -1955,6 +1955,11 @@ pub fn cm_get_clients_length() -> usize {
 
 pub fn main_init(app_dir: String, custom_client_config: String) {
     initialize(&app_dir, &custom_client_config);
+    crate::lan::set_peers_changed_handler(|| {
+        main_load_lan_peers();
+        main_load_recent_peers();
+        main_load_fav_peers();
+    });
 }
 
 pub fn main_device_name(name: String) {

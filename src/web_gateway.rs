@@ -1997,3 +1997,47 @@ mod tests {
         private_key.zeroize();
     }
 }
+
+#[cfg(test)]
+mod origin_property_tests {
+    use super::{origin_allowed, valid_authority};
+    use proptest::prelude::*;
+
+    fn host() -> impl Strategy<Value = String> {
+        "[a-z][a-z0-9-]{0,10}(\\.[a-z][a-z0-9]{0,6}){0,2}"
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_inputs_never_panic(origin in ".{0,80}", authority in ".{0,80}", secure: bool) {
+            let _ = valid_authority(&authority);
+            let _ = origin_allowed(Some(&origin), &authority, secure);
+        }
+
+        #[test]
+        fn same_origin_is_accepted(host in host(), port in 1u16..) {
+            let authority = format!("{}:{}", host, port);
+            let origin = format!("https://{}", authority);
+            let accepted = origin_allowed(Some(&origin), &authority, true);
+            prop_assert!(accepted);
+        }
+
+        #[test]
+        fn different_host_scheme_or_userinfo_is_rejected(
+            a in host(), b in host(), port in 1u16..
+        ) {
+            prop_assume!(a != b);
+            let authority = format!("{}:{}", a, port);
+            let other_host = format!("https://{}:{}", b, port);
+            let plain_http = format!("http://{}:{}", a, port);
+            let userinfo = format!("https://user@{}:{}", a, port);
+            let accepted = [
+                origin_allowed(Some(&other_host), &authority, true),
+                origin_allowed(Some(&plain_http), &authority, true),
+                origin_allowed(Some(&userinfo), &authority, true),
+                origin_allowed(None, &authority, true),
+            ];
+            prop_assert_eq!(accepted, [false; 4]);
+        }
+    }
+}

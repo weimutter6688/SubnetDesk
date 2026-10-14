@@ -241,6 +241,7 @@ os-version = "0.2"
 
 [dev-dependencies]
 hound = "3.5"
+proptest = { version = "=1.5.0", default-features = false, features = ["std"] }
 docopt = "1.1"
 
 [package.metadata.bundle]
