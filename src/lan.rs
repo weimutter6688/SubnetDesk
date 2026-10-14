@@ -151,12 +151,18 @@ impl PongRateLimiter {
 
 #[cfg(not(target_os = "ios"))]
 pub(super) fn start_listening() -> ResultType<()> {
+    // start_listening may be restarted by its supervisor; publish mDNS only once.
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    std::thread::spawn(|| {
-        if let Err(err) = crate::lan_mdns::start_publisher() {
-            log::warn!("mDNS publisher stopped: {err}");
-        }
-    });
+    {
+        static MDNS_PUBLISHER: std::sync::Once = std::sync::Once::new();
+        MDNS_PUBLISHER.call_once(|| {
+            std::thread::spawn(|| {
+                if let Err(err) = crate::lan_mdns::start_publisher() {
+                    log::warn!("mDNS publisher stopped: {err}");
+                }
+            });
+        });
+    }
 
     let addr = SocketAddr::from(([0, 0, 0, 0], get_broadcast_port()));
     let socket = std::net::UdpSocket::bind(addr)?;
