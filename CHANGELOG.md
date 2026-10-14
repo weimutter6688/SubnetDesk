@@ -8,7 +8,7 @@ All notable SubnetDesk changes are documented in this file.
 - **Behavior change:** an invalid CIDR/entry in `lan-allowed-networks` now fails closed — the whole allow-list rejects every peer and the LAN listener refuses to start until the entry is fixed (it used to be silently skipped).
 - **Behavior change:** while the shared default access password is still set, logins are accepted only from loopback; set your own password to allow remote LAN access.
 - CI quality gates: cargo-audit with a documented baseline, cargo-deny source/ban checks, fuzz smoke tests for the LAN message decoder and endpoint parser, a Clippy correctness gate, and property tests for allow-list parsing and Web origin checks.
-- Dependency advisory fixes: rustls 0.23.45, rustls-webpki 0.103.15, openssl 0.10.72, quinn-proto 0.11.15, h2 0.4.16, bytes 1.11.1, crossbeam-channel/epoch, url 2.5.4/idna 1.1 (13 advisories fixed). The rest stay in `.cargo/audit.toml` with reasons, mostly needing Rust ≥1.85.
+- Dependency advisory fixes: rustls 0.23.46, rustls-webpki 0.103.15, openssl 0.10.72, quinn-proto 0.11.15, h2 0.4.16, bytes 1.11.1, crossbeam-channel/epoch, url 2.5.4/idna 1.1 (17 advisories fixed, including RUSTSEC-2026-0346..0349 published 2026-10-14). The rest stay in `.cargo/audit.toml` with reasons, mostly needing Rust ≥1.85.
 - Docs: Linux build dependencies (README), Android namespace notes, Rust quality gates.
 
 ## [1.3.0.87] - 2026-10-11
