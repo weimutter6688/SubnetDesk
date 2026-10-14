@@ -1,0 +1,36 @@
+# cargo-deny policy (sources + bans). Advisories are gated by cargo-audit with the
+# baseline in .cargo/audit.toml; licenses are not gated yet (see docs/rust-quality-gates.md).
+
+[graph]
+all-features = false
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "aarch64-linux-android",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# Some pins are only reached through optional features (screencapturekit, unix-file-copy-paste).
+unused-allowed-source = "allow"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Inherited RustDesk forks and the few third-party git pins already in Cargo.lock.
+# Adding a new git source must be a deliberate, reviewed change to this list.
+allow-org = { github = ["rustdesk-org"] }
+allow-git = [
+    "https://github.com/madsmtm/core-foundation-rs.git",
+    "https://github.com/yury/cidre.git",
+    "https://github.com/tauri-apps/tray-icon",
+    "https://github.com/clslaid/x11-clipboard",
+    "https://github.com/clslaid/cacao",
+    "https://github.com/bjornsnoen/x11-rs",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"

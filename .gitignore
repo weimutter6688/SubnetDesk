@@ -66,3 +66,8 @@ flutter/web/
 /third_party/libdrmtap/
 res/*.pkg.tar.zst
 res/pkg/
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+/fuzz/coverage
+/fuzz/Cargo.lock
