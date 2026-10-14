@@ -140,6 +140,21 @@ lazy_static::lazy_static! {
     static ref WAKELOCK_KEEP_AWAKE_OPTION: Arc::<Mutex<Option<bool>>> = Default::default();
 }
 
+const LOGIN_MSG_LAN_DEFAULT_CREDENTIALS: &str =
+    "The default access password must be changed on this device before remote login is allowed";
+
+fn source_is_loopback(ip: &str) -> bool {
+    ip.parse::<std::net::IpAddr>()
+        .map(|ip| match ip {
+            std::net::IpAddr::V6(v6) => v6
+                .to_ipv4_mapped()
+                .map(|v4| v4.is_loopback())
+                .unwrap_or(v6.is_loopback()),
+            std::net::IpAddr::V4(v4) => v4.is_loopback(),
+        })
+        .unwrap_or(false)
+}
+
 #[cfg(target_os = "windows")]
 const TERMINAL_OS_LOGIN_FAILED_MSG: &str = "Incorrect username or password.";
 
@@ -353,7 +368,7 @@ pub struct Connection {
     tx_to_cm: IpcSender,
     queue_failure: QueueFailure,
     authorized: bool,
-    auth_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    auth_permit: Option<super::PendingAuthPermit>,
     web_client: bool,
     keyboard: bool,
     clipboard: bool,
@@ -551,7 +566,7 @@ impl Connection {
         id: i32,
         server: super::ServerPtrWeak,
         meta: super::ConnectionMeta,
-        auth_permit: tokio::sync::OwnedSemaphorePermit,
+        auth_permit: super::PendingAuthPermit,
     ) {
         let _raii_id = raii::ConnectionID::new(id);
         let queue_failure = QueueFailure::default();
@@ -2036,6 +2051,11 @@ impl Connection {
                 retry_after,
             )
             .await;
+            return true;
+        }
+        if Config::lan_credentials_are_default() && !source_is_loopback(&self.ip) {
+            log::warn!("Rejected remote LAN login from {}: default credentials are still active", self.ip);
+            self.send_login_error(LOGIN_MSG_LAN_DEFAULT_CREDENTIALS).await;
             return true;
         }
         clear_lan_auth_source(&self.ip);

@@ -163,7 +163,17 @@ pub(super) fn start_listening() -> ResultType<()> {
                                     ..Default::default()
                                 };
                                 msg_out.set_peer_discovery(peer);
-                                socket.send_to(&msg_out.write_to_bytes()?, addr).ok();
+                                match msg_out.write_to_bytes() {
+                                    Ok(bytes) => {
+                                        if let Err(err) = socket.send_to(&bytes, addr) {
+                                            log::debug!("discovery pong to {addr} failed: {err}");
+                                        }
+                                    }
+                                    Err(err) => {
+                                        // Never let one bad encode terminate the discovery thread.
+                                        log::warn!("failed to encode discovery pong: {err}");
+                                    }
+                                }
                             }
                         }
                     }
