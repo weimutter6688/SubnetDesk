@@ -45,7 +45,9 @@ lazy_static::lazy_static! {
 }
 
 fn set_runtime_status(state: &str, last_error: String) {
-    let mut status = RUNTIME_STATUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut status = RUNTIME_STATUS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     status.state = state.to_owned();
     status.last_error = last_error;
 }
@@ -64,7 +66,10 @@ impl LanServer {
     }
 
     pub fn runtime_status() -> LanServerRuntimeStatus {
-        RUNTIME_STATUS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+        RUNTIME_STATUS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     pub(crate) fn is_discoverable() -> bool {
