@@ -8,7 +8,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -46,7 +46,7 @@ use hbb_common::{
         self,
         io::{duplex, AsyncReadExt, AsyncWriteExt},
         net::TcpStream,
-        sync::{watch, OwnedSemaphorePermit, Semaphore},
+        sync::watch,
         time::timeout,
     },
     tokio_util::codec::Framed,
@@ -61,6 +61,9 @@ use tower_http::compression::CompressionLayer;
 use x509_parser::prelude::{parse_x509_certificate, GeneralName};
 use zeroize::Zeroize;
 
+use parking_lot::Mutex;
+
+use crate::admission::{Admission, AdmissionControl, AdmitError};
 use crate::server::ServerPtr;
 
 pub const DEFAULT_WEB_PORT: u16 = 18_123;
@@ -117,52 +120,30 @@ pub(crate) struct WebRuntimeStatus {
 
 static ACTIVE_WEB_SESSIONS: AtomicUsize = AtomicUsize::new(0);
 
+/// Web sessions reuse the shared admission control and add the active-session gauge.
 #[derive(Clone)]
 struct ConnectionLimiter {
-    global: Arc<Semaphore>,
-    per_source: Arc<Mutex<HashMap<IpAddr, usize>>>,
-    max_per_source: usize,
+    admission: AdmissionControl,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum ConnectionLimitError {
-    Global,
-    Source,
-}
+type ConnectionLimitError = AdmitError;
 
 struct ConnectionPermit {
-    _global: OwnedSemaphorePermit,
-    source: IpAddr,
-    per_source: Arc<Mutex<HashMap<IpAddr, usize>>>,
+    _admission: Admission,
 }
 
 impl ConnectionLimiter {
     fn new(max_global: usize, max_per_source: usize) -> Self {
         Self {
-            global: Arc::new(Semaphore::new(max_global)),
-            per_source: Arc::new(Mutex::new(HashMap::new())),
-            max_per_source,
+            admission: AdmissionControl::new(max_global, max_per_source),
         }
     }
 
     fn try_acquire(&self, source: IpAddr) -> Result<ConnectionPermit, ConnectionLimitError> {
-        let global = self
-            .global
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| ConnectionLimitError::Global)?;
-        let mut sources = self.per_source.lock().unwrap();
-        let count = sources.entry(source).or_default();
-        if *count >= self.max_per_source {
-            return Err(ConnectionLimitError::Source);
-        }
-        *count += 1;
+        let admission = self.admission.try_admit(source)?;
         ACTIVE_WEB_SESSIONS.fetch_add(1, Ordering::SeqCst);
-        drop(sources);
         Ok(ConnectionPermit {
-            _global: global,
-            source,
-            per_source: self.per_source.clone(),
+            _admission: admission,
         })
     }
 }
@@ -170,13 +151,6 @@ impl ConnectionLimiter {
 impl Drop for ConnectionPermit {
     fn drop(&mut self) {
         ACTIVE_WEB_SESSIONS.fetch_sub(1, Ordering::SeqCst);
-        let mut sources = self.per_source.lock().unwrap();
-        if let Some(count) = sources.get_mut(&self.source) {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                sources.remove(&self.source);
-            }
-        }
     }
 }
 
@@ -1349,7 +1323,7 @@ async fn restrict_request(
         return (StatusCode::FORBIDDEN, "Host is not allowed").into_response();
     }
     if !source
-        .map(|source| state.request_budget.lock().unwrap().allow(source))
+        .map(|source| state.request_budget.lock().allow(source))
         .unwrap_or(false)
     {
         return (StatusCode::TOO_MANY_REQUESTS, "Too many requests").into_response();
@@ -1819,7 +1793,7 @@ mod tests {
         let second = limiter.try_acquire(source).unwrap();
         assert!(matches!(
             limiter.try_acquire(source),
-            Err(ConnectionLimitError::Source)
+            Err(ConnectionLimitError::PerSource)
         ));
         drop(first);
         assert!(limiter.try_acquire(source).is_ok());
@@ -1950,7 +1924,7 @@ mod tests {
             async move {
                 limit_websocket_input(websocket).on_upgrade(move |mut socket| async move {
                     let result = matches!(socket.recv().await, Some(Err(_)));
-                    if let Some(tx) = result_sender.lock().unwrap().take() {
+                    if let Some(tx) = result_sender.lock().take() {
                         let _ = tx.send(result);
                     }
                 })

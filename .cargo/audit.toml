@@ -1,0 +1,32 @@
+# cargo-audit baseline. CI fails on any advisory NOT listed here, so new
+# vulnerabilities block merges while these inherited ones are worked down.
+# Baseline taken 2026-10-14 from Cargo.lock at master 2b6697a. Remove an entry as
+# soon as the dependency is upgraded; never add one without a tracking note.
+[advisories]
+ignore = [
+    "RUSTSEC-2020-0071",  # time
+    "RUSTSEC-2024-0013",  # libgit2-sys
+    "RUSTSEC-2024-0421",  # idna
+    "RUSTSEC-2025-0004",  # openssl
+    "RUSTSEC-2025-0022",  # openssl
+    "RUSTSEC-2025-0024",  # crossbeam-channel
+    "RUSTSEC-2025-0040",  # users
+    "RUSTSEC-2026-0007",  # bytes
+    "RUSTSEC-2026-0009",  # time
+    "RUSTSEC-2026-0037",  # quinn-proto
+    "RUSTSEC-2026-0049",  # rustls-webpki
+    "RUSTSEC-2026-0098",  # rustls-webpki
+    "RUSTSEC-2026-0099",  # rustls-webpki
+    "RUSTSEC-2026-0104",  # rustls-webpki
+    "RUSTSEC-2026-0185",  # quinn-proto
+    "RUSTSEC-2026-0194",  # quick-xml
+    "RUSTSEC-2026-0195",  # quick-xml
+    "RUSTSEC-2026-0204",  # crossbeam-epoch
+    "RUSTSEC-2026-0258",  # h2
+    "RUSTSEC-2026-0285",  # rustls
+    "RUSTSEC-2026-0293",  # ringbuf
+    "RUSTSEC-2026-0338",  # quinn-proto
+    "RUSTSEC-2026-0339",  # quinn-proto
+    "RUSTSEC-2026-0340",  # quinn-proto
+    "RUSTSEC-2026-0342",  # quinn-proto
+]

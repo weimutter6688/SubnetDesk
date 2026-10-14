@@ -1,0 +1,30 @@
+[package]
+name = "subnetdesk-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+hbb_common = { path = "../libs/hbb_common" }
+
+# Not part of the main workspace: built only by `cargo +nightly fuzz`.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "lan_message_decode"
+path = "fuzz_targets/lan_message_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lan_endpoint_parse"
+path = "fuzz_targets/lan_endpoint_parse.rs"
+test = false
+doc = false
+bench = false

@@ -3,7 +3,7 @@
 use hbb_common::{
     anyhow::anyhow,
     config::{Config, DiscoveryPeer},
-    lan::{device_fingerprint, DEFAULT_PORT, PROTOCOL_VERSION},
+    lan::{device_fingerprint, PROTOCOL_VERSION},
     log,
     tokio::sync::mpsc::UnboundedSender,
     ResultType,
@@ -31,7 +31,7 @@ struct Announcement {
 
 impl Announcement {
     fn current() -> Option<Self> {
-        if Config::get_option("lan-discovery-enabled") != "Y"
+        if !crate::lan_config::discovery_enabled()
             || !crate::lan_server::LanServer::is_discoverable()
         {
             return None;
@@ -52,11 +52,7 @@ impl Announcement {
             display_name,
             platform: hbb_common::whoami::platform().to_string(),
             fingerprint,
-            port: Config::get_option("lan-listen-port")
-                .parse::<u16>()
-                .ok()
-                .filter(|port| *port > 0)
-                .unwrap_or(DEFAULT_PORT),
+            port: crate::lan_config::ListenPort::configured().get(),
             addresses,
         })
     }

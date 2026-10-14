@@ -20,7 +20,9 @@ pub mod common;
 pub mod ipc;
 #[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 mod diagnostics;
+mod admission;
 mod lan;
+mod lan_config;
 mod lan_identity;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod lan_mdns;

@@ -112,6 +112,43 @@ pub(crate) fn device_display_name() -> String {
     )
 }
 
+/// At most one discovery reply per source address per interval; bounded memory.
+struct PongRateLimiter {
+    last_reply: HashMap<IpAddr, Instant>,
+    interval: Duration,
+    max_tracked: usize,
+}
+
+impl Default for PongRateLimiter {
+    fn default() -> Self {
+        Self {
+            last_reply: HashMap::new(),
+            interval: Duration::from_secs(1),
+            max_tracked: 4096,
+        }
+    }
+}
+
+impl PongRateLimiter {
+    fn allow(&mut self, source: IpAddr, now: Instant) -> bool {
+        if let Some(last) = self.last_reply.get(&source) {
+            if now.saturating_duration_since(*last) < self.interval {
+                return false;
+            }
+        }
+        if self.last_reply.len() >= self.max_tracked {
+            let interval = self.interval;
+            self.last_reply
+                .retain(|_, last| now.saturating_duration_since(*last) < interval);
+            if self.last_reply.len() >= self.max_tracked {
+                return false;
+            }
+        }
+        self.last_reply.insert(source, now);
+        true
+    }
+}
+
 #[cfg(not(target_os = "ios"))]
 pub(super) fn start_listening() -> ResultType<()> {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -125,6 +162,7 @@ pub(super) fn start_listening() -> ResultType<()> {
     let socket = std::net::UdpSocket::bind(addr)?;
     socket.set_read_timeout(Some(std::time::Duration::from_millis(1000)))?;
     log::info!("lan discovery listener started");
+    let mut pong_limiter = PongRateLimiter::default();
     loop {
         let mut buf = [0; 2048];
         if let Ok((len, addr)) = socket.recv_from(&mut buf) {
@@ -132,31 +170,30 @@ pub(super) fn start_listening() -> ResultType<()> {
                 match msg_in.union {
                     Some(rendezvous_message::Union::PeerDiscovery(p)) => {
                         if p.cmd == "ping"
-                            && Config::get_option("lan-discovery-enabled") == "Y"
+                            && crate::lan_config::discovery_enabled()
                             && crate::lan_server::LanServer::is_discoverable()
                             && crate::lan_server::source_allowed(addr.ip())
+                            && pong_limiter.allow(addr.ip(), Instant::now())
                         {
                             let fingerprint =
                                 crate::lan_protocol::fingerprint(&Config::get_key_pair().1);
                             if p.id == fingerprint {
                                 continue;
                             }
-                            if let Some(self_addr) = get_ipaddr_by_peer(&addr) {
+                            if get_ipaddr_by_peer(&addr).is_some() {
                                 let mut msg_out = Message::new();
+                                // The MAC address is not sent: clients only need the
+                                // fingerprint and port, and UDP sources can be spoofed.
                                 let peer = PeerDiscovery {
                                     cmd: "pong".to_owned(),
-                                    mac: get_mac(&self_addr),
+                                    mac: String::new(),
                                     id: fingerprint.clone(),
                                     hostname: device_display_name(),
                                     username: String::new(),
                                     platform: whoami::platform().to_string(),
                                     misc: serde_json::json!({
                                         "protocol_version": hbb_common::lan::PROTOCOL_VERSION,
-                                        "port": Config::get_option("lan-listen-port")
-                                            .parse::<u16>()
-                                            .ok()
-                                            .filter(|port| *port > 0)
-                                            .unwrap_or(hbb_common::lan::DEFAULT_PORT),
+                                        "port": crate::lan_config::ListenPort::configured().get(),
                                         "fingerprint": fingerprint,
                                     })
                                     .to_string(),
@@ -185,7 +222,7 @@ pub(super) fn start_listening() -> ResultType<()> {
 }
 
 pub(crate) async fn discover_async() -> ResultType<()> {
-    if Config::get_option("lan-discovery-enabled") != "Y" {
+    if !crate::lan_config::discovery_enabled() {
         return Ok(());
     }
     if DISCOVERY_RUNNING
@@ -960,5 +997,25 @@ mod tests {
         assert!(!connectable_local_address("127.0.0.1".parse().unwrap()));
         assert!(!connectable_local_address("fe80::20".parse().unwrap()));
         assert!(!connectable_local_address("ff02::fb".parse().unwrap()));
+    }
+
+    #[test]
+    fn pong_rate_limiter_allows_one_reply_per_source_per_interval() {
+        let mut limiter = PongRateLimiter {
+            max_tracked: 2,
+            ..Default::default()
+        };
+        let start = Instant::now();
+        let a: IpAddr = "192.168.1.10".parse().unwrap();
+        let b: IpAddr = "192.168.1.11".parse().unwrap();
+        let c: IpAddr = "192.168.1.12".parse().unwrap();
+        assert!(limiter.allow(a, start));
+        assert!(!limiter.allow(a, start + Duration::from_millis(500)));
+        assert!(limiter.allow(b, start));
+        // Table full of fresh entries: new sources are refused rather than growing it.
+        assert!(!limiter.allow(c, start + Duration::from_millis(10)));
+        // After the interval, stale entries are evicted and replies resume.
+        assert!(limiter.allow(c, start + Duration::from_secs(2)));
+        assert!(limiter.allow(a, start + Duration::from_secs(2)));
     }
 }

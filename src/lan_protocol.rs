@@ -2,7 +2,6 @@
 
 use bytes::Bytes;
 use hbb_common::{
-    anyhow::{anyhow, bail},
     config::{Config, CONNECT_TIMEOUT, READ_TIMEOUT},
     lan::{NONCE_LEN, PROTOCOL_VERSION},
     message_proto::{message, LanClientHello, LanServerHello, Message, PublicKey},
@@ -14,6 +13,8 @@ use hbb_common::{
     tcp, timeout, ResultType, Stream,
 };
 
+use zeroize::Zeroizing;
+
 const TRANSCRIPT_PREFIX: &[u8] = b"subnetdesk-lan-handshake-v3\0";
 pub(crate) const MAX_AUTH_PACKET_LENGTH: usize = 64 * 1024;
 
@@ -22,13 +23,61 @@ pub struct LanPeerIdentity {
     pub fingerprint: String,
 }
 
-fn require_protocol_version(remote: u32, role: &str) -> ResultType<()> {
+/// Typed handshake failures. `code()` values are stable and are also embedded in
+/// the display text as `[LAN-Exxxx]`, so the UI can map them without parsing prose.
+/// Append new codes; never renumber or reuse one.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum HandshakeError {
+    #[error("LAN protocol version mismatch: {role} {local}, peer {peer} [LAN-E1001]")]
+    VersionMismatch {
+        role: &'static str,
+        local: u32,
+        peer: u32,
+    },
+    #[error("Handshake failed: invalid {0} length [LAN-E1002]")]
+    InvalidLength(&'static str),
+    #[error("Handshake failed: device signature mismatch [LAN-E1003]")]
+    BadSignature,
+    #[error("Handshake failed: signed transcript mismatch [LAN-E1004]")]
+    TranscriptMismatch,
+    #[error("Handshake failed: {0} [LAN-E1005]")]
+    UnexpectedMessage(&'static str),
+    #[error("Handshake failed: invalid {0} [LAN-E1006]")]
+    Malformed(&'static str),
+    #[error("Handshake failed: {0} closed the connection [LAN-E1007]")]
+    Closed(&'static str),
+    #[error("Handshake failed: invalid device identity key [LAN-E1008]")]
+    InvalidIdentity,
+}
+
+#[cfg_attr(target_os = "ios", allow(dead_code))]
+impl HandshakeError {
+    pub const fn code(&self) -> u32 {
+        match self {
+            Self::VersionMismatch { .. } => 1001,
+            Self::InvalidLength(_) => 1002,
+            Self::BadSignature => 1003,
+            Self::TranscriptMismatch => 1004,
+            Self::UnexpectedMessage(_) => 1005,
+            Self::Malformed(_) => 1006,
+            Self::Closed(_) => 1007,
+            Self::InvalidIdentity => 1008,
+        }
+    }
+
+    /// Finds a handshake error anywhere in an `anyhow` context chain.
+    pub fn find(err: &hbb_common::anyhow::Error) -> Option<&Self> {
+        err.chain().find_map(|cause| cause.downcast_ref::<Self>())
+    }
+}
+
+fn require_protocol_version(remote: u32, role: &'static str) -> Result<(), HandshakeError> {
     if remote != PROTOCOL_VERSION {
-        bail!(
-            "LAN protocol version mismatch: {role} {}, peer {}",
-            PROTOCOL_VERSION,
-            remote
-        );
+        return Err(HandshakeError::VersionMismatch {
+            role,
+            local: PROTOCOL_VERSION,
+            peer: remote,
+        });
     }
     Ok(())
 }
@@ -39,10 +88,10 @@ fn transcript(
     ephemeral_public_key: &[u8],
 ) -> ResultType<Vec<u8>> {
     if client_nonce.len() != NONCE_LEN || server_nonce.len() != NONCE_LEN {
-        bail!("Handshake failed: invalid nonce length");
+        return Err(HandshakeError::InvalidLength("nonce").into());
     }
     if ephemeral_public_key.len() != box_::PUBLICKEYBYTES {
-        bail!("Handshake failed: invalid ephemeral public key length");
+        return Err(HandshakeError::InvalidLength("ephemeral public key").into());
     }
     let mut out =
         Vec::with_capacity(TRANSCRIPT_PREFIX.len() + 4 + NONCE_LEN * 2 + box_::PUBLICKEYBYTES);
@@ -72,16 +121,16 @@ pub async fn client_handshake(stream: &mut Stream) -> ResultType<LanPeerIdentity
 
     let bytes = timeout(READ_TIMEOUT, stream.next())
         .await?
-        .ok_or_else(|| anyhow!("Handshake failed: server closed the connection"))??;
-    let message = Message::parse_from_bytes(&bytes)
-        .map_err(|_| anyhow!("Handshake failed: invalid server hello"))?;
+        .ok_or(HandshakeError::Closed("server"))??;
+    let message =
+        Message::parse_from_bytes(&bytes).map_err(|_| HandshakeError::Malformed("server hello"))?;
     let server_hello = match message.union {
         Some(message::Union::LanServerHello(value)) => value,
-        _ => bail!("Handshake failed: LAN protocol required"),
+        _ => return Err(HandshakeError::UnexpectedMessage("LAN protocol required").into()),
     };
     require_protocol_version(server_hello.protocol_version, "client")?;
     if server_hello.device_public_key.len() != sign::PUBLICKEYBYTES {
-        bail!("Handshake failed: invalid device public key length");
+        return Err(HandshakeError::InvalidLength("device public key").into());
     }
     let mut device_pk = [0u8; sign::PUBLICKEYBYTES];
     device_pk.copy_from_slice(&server_hello.device_public_key);
@@ -92,9 +141,9 @@ pub async fn client_handshake(stream: &mut Stream) -> ResultType<LanPeerIdentity
         &server_hello.ephemeral_public_key,
     )?;
     let signed = sign::verify(&server_hello.signature, &device_pk)
-        .map_err(|_| anyhow!("Handshake failed: device signature mismatch"))?;
+        .map_err(|_| HandshakeError::BadSignature)?;
     if signed != expected {
-        bail!("Handshake failed: signed transcript mismatch");
+        return Err(HandshakeError::TranscriptMismatch.into());
     }
 
     let mut ephemeral_pk = [0u8; box_::PUBLICKEYBYTES];
@@ -119,14 +168,18 @@ pub async fn client_handshake(stream: &mut Stream) -> ResultType<LanPeerIdentity
 
 pub async fn server_handshake(stream: &mut Stream) -> ResultType<()> {
     let (secret_key, public_key) = Config::get_key_pair();
+    // Wipe every copy of the long-term signing key once the handshake is done.
+    let secret_key = Zeroizing::new(secret_key);
     if secret_key.len() != sign::SECRETKEYBYTES || public_key.len() != sign::PUBLICKEYBYTES {
-        bail!("Handshake failed: invalid device identity key");
+        return Err(HandshakeError::InvalidIdentity.into());
     }
-    let mut secret = [0u8; sign::SECRETKEYBYTES];
+    let mut secret = Zeroizing::new([0u8; sign::SECRETKEYBYTES]);
     secret.copy_from_slice(&secret_key);
     let mut public = [0u8; sign::PUBLICKEYBYTES];
     public.copy_from_slice(&public_key);
-    server_handshake_with_identity(stream, &sign::SecretKey(secret), &sign::PublicKey(public)).await
+    // sodiumoxide's SecretKey zeroes its bytes on drop.
+    let device_secret_key = sign::SecretKey(*secret);
+    server_handshake_with_identity(stream, &device_secret_key, &sign::PublicKey(public)).await
 }
 
 async fn server_handshake_with_identity(
@@ -138,16 +191,16 @@ async fn server_handshake_with_identity(
     stream.set_max_packet_length(MAX_AUTH_PACKET_LENGTH);
     let bytes = timeout(READ_TIMEOUT, stream.next())
         .await?
-        .ok_or_else(|| anyhow!("Handshake failed: client closed the connection"))??;
-    let message = Message::parse_from_bytes(&bytes)
-        .map_err(|_| anyhow!("Handshake failed: invalid client hello"))?;
+        .ok_or(HandshakeError::Closed("client"))??;
+    let message =
+        Message::parse_from_bytes(&bytes).map_err(|_| HandshakeError::Malformed("client hello"))?;
     let client_hello = match message.union {
         Some(message::Union::LanClientHello(value)) => value,
-        _ => bail!("Handshake failed: LAN protocol required"),
+        _ => return Err(HandshakeError::UnexpectedMessage("LAN protocol required").into()),
     };
     require_protocol_version(client_hello.protocol_version, "server")?;
     if client_hello.client_nonce.len() != NONCE_LEN {
-        bail!("Handshake failed: invalid client nonce length");
+        return Err(HandshakeError::InvalidLength("client nonce").into());
     }
 
     let (ephemeral_public_key, ephemeral_secret_key) = box_::gen_keypair();
@@ -172,12 +225,12 @@ async fn server_handshake_with_identity(
 
     let bytes = timeout(READ_TIMEOUT, stream.next())
         .await?
-        .ok_or_else(|| anyhow!("Handshake failed: client closed during key exchange"))??;
+        .ok_or(HandshakeError::Closed("client during key exchange"))??;
     let message = Message::parse_from_bytes(&bytes)
-        .map_err(|_| anyhow!("Handshake failed: invalid client key message"))?;
+        .map_err(|_| HandshakeError::Malformed("client key message"))?;
     let client_key = match message.union {
         Some(message::Union::PublicKey(value)) => value,
-        _ => bail!("Handshake failed: client key message required"),
+        _ => return Err(HandshakeError::UnexpectedMessage("client key message required").into()),
     };
     let key = tcp::Encrypt::decode(
         &client_key.symmetric_value,
@@ -429,5 +482,43 @@ mod tests {
         assert!(!captured
             .windows(marker.len())
             .any(|window| window == marker.as_bytes()));
+    }
+
+    #[test]
+    fn handshake_error_codes_are_stable_and_embedded() {
+        let cases = [
+            (
+                HandshakeError::VersionMismatch {
+                    role: "client",
+                    local: 3,
+                    peer: 2,
+                },
+                1001,
+            ),
+            (HandshakeError::InvalidLength("nonce"), 1002),
+            (HandshakeError::BadSignature, 1003),
+            (HandshakeError::TranscriptMismatch, 1004),
+            (HandshakeError::UnexpectedMessage("x"), 1005),
+            (HandshakeError::Malformed("x"), 1006),
+            (HandshakeError::Closed("server"), 1007),
+            (HandshakeError::InvalidIdentity, 1008),
+        ];
+        for (error, code) in cases {
+            assert_eq!(error.code(), code);
+            assert!(error.to_string().ends_with(&format!("[LAN-E{code}]")));
+            let wrapped =
+                hbb_common::anyhow::Error::from(error.clone()).context("192.168.1.2:21118");
+            assert_eq!(
+                HandshakeError::find(&wrapped).map(HandshakeError::code),
+                Some(code)
+            );
+        }
+        assert!(require_protocol_version(PROTOCOL_VERSION, "server").is_ok());
+        assert_eq!(
+            require_protocol_version(PROTOCOL_VERSION + 1, "server")
+                .unwrap_err()
+                .code(),
+            1001
+        );
     }
 }
