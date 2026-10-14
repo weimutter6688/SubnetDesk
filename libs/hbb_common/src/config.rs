@@ -1125,6 +1125,13 @@ impl Config {
         )
     }
 
+    /// True while the shared, publicly documented first-run password hash is still
+    /// installed. Remote (non-loopback) logins are refused in that state.
+    pub fn lan_credentials_are_default() -> bool {
+        let config = CONFIG.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        config.access_password_hash == DEFAULT_LAN_ACCESS_PASSWORD_HASH
+    }
+
     fn verify_lan_credentials_against(
         stored_username: &str,
         stored_password_hash: &str,
