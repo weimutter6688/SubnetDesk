@@ -1009,7 +1009,7 @@ impl Connection {
                     }
                 },
                 _ = second_timer.tick() => {
-                    if pending_send.as_ref().map_or(false, |pending| pending.queued_at.elapsed().as_millis() >= send_timeout as u128) {
+                    if pending_send.as_ref().map_or(false, |pending| pending.queued_at.elapsed().as_millis() >= conn.send_timeout() as u128) {
                         conn.on_close("Message send timeout", true).await;
                         break;
                     }
@@ -1969,6 +1969,19 @@ impl Connection {
         self.terminal_persistent = false;
     }
 
+    /// Send timeout for this connection's type. Before the login request
+    /// arrives the type is unknown and the video timeout applies.
+    fn send_timeout(&self) -> u64 {
+        if self.file_transfer.is_some()
+            || self.terminal
+            || matches!(self.lr.union, Some(login_request::Union::PortForward(_)))
+        {
+            SEND_TIMEOUT_OTHER
+        } else {
+            SEND_TIMEOUT_VIDEO
+        }
+    }
+
     async fn configure_lan_connection_scope(&mut self, lr: &LoginRequest) -> bool {
         match lr.union.as_ref() {
             Some(login_request::Union::FileTransfer(ft)) => {
@@ -2092,16 +2105,7 @@ impl Connection {
             return false;
         }
 
-        self.stream.set_send_timeout(
-            if self.file_transfer.is_some()
-                || self.terminal
-                || matches!(self.lr.union, Some(login_request::Union::PortForward(_)))
-            {
-                SEND_TIMEOUT_OTHER
-            } else {
-                SEND_TIMEOUT_VIDEO
-            },
-        );
+        self.stream.set_send_timeout(self.send_timeout());
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         if !should_use_terminal_os_login_scope(self.terminal, &lr.os_login.username) {
